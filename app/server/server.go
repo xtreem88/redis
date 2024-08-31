@@ -5,55 +5,64 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 )
 
 type Server struct {
 	listener net.Listener
+	addr     string
 	quitch   chan struct{}
 }
 
-func New() *Server {
+func New(addr string) (*Server, error) {
 	return &Server{
+		addr:   addr,
 		quitch: make(chan struct{}),
-	}
+	}, nil
 }
 
-func (s *Server) Start() {
-	fmt.Println("Logs from your program will appear here!")
-	l, err := net.Listen("tcp", "localhost:6379")
+func (s *Server) Listen() error {
+	l, err := net.Listen("tcp", s.addr)
 	if err != nil {
-		fmt.Println("Failed to bind to port 6379")
-		os.Exit(1)
+		return fmt.Errorf("failed to bind to %s: %w", s.addr, err)
 	}
 	defer l.Close()
 	s.listener = l
-	go s.acceptLoop()
+
+	fmt.Printf("Server listening on %s\n", s.addr)
+	go s.accept()
 	<-s.quitch
+	return nil
 }
 
-func (s *Server) acceptLoop() {
+func (s *Server) accept() {
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
-			fmt.Println("Error accepting connection: ", err.Error())
-			os.Exit(1)
+			fmt.Printf("Error accepting connection: %v\n", err)
+			continue
 		}
-		go s.readLoop(conn)
+		go s.handleConnection(conn)
 	}
 }
 
-func (s *Server) readLoop(conn net.Conn) {
+func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
+	fmt.Printf("New connection from %s\n", conn.RemoteAddr())
 	for {
 		buf := make([]byte, 1024)
-		_, err := conn.Read(buf)
+		n, err := conn.Read(buf)
 		if errors.Is(err, io.EOF) {
-			fmt.Println("Client closed the connections:", conn.RemoteAddr())
+			fmt.Printf("Client closed the connection: %s\n", conn.RemoteAddr())
 			break
 		} else if err != nil {
-			fmt.Println("Error while reading the message")
+			fmt.Printf("Error reading from connection: %v\n", err)
+			break
 		}
-		conn.Write([]byte("+PONG\r\n"))
+		fmt.Printf("Received: %s", buf[:n])
+		_, err = conn.Write([]byte("+PONG\r\n"))
+		if err != nil {
+			fmt.Printf("Error writing to connection: %v\n", err)
+			break
+		}
 	}
 }
