@@ -75,5 +75,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 func handleCommand(conn net.Conn, s []string) {
 	command := strings.ToUpper(s[0])
 	cmd := handler.Commands[command]
-	cmd(conn, s)
+	if cmd != nil {
+		cmd(conn, s)
+	}
 }

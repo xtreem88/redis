@@ -3,11 +3,8 @@ package parser
 import (
 	"bufio"
 	"io"
-	"net"
 	"strconv"
 	"strings"
-
-	"github.com/codecrafters-io/redis-starter-go/app/handler"
 )
 
 func ParseArray(reader *bufio.Reader) ([]string, error) {
@@ -52,10 +49,4 @@ func parseArrayElement(reader *bufio.Reader) (string, error) {
 		return "", err
 	}
 	return string(element), nil
-}
-
-func handleCommand(conn net.Conn, s []string) {
-	command := strings.ToUpper(s[0])
-	cmd := handler.Commands[command]
-	cmd(conn, s)
 }
