@@ -7,32 +7,40 @@ import (
 	"net"
 	"strings"
 
+	"github.com/codecrafters-io/redis-starter-go/app/config"
 	"github.com/codecrafters-io/redis-starter-go/app/handler"
 	"github.com/codecrafters-io/redis-starter-go/app/parser"
+	"github.com/codecrafters-io/redis-starter-go/app/persistence"
 )
 
 type Server struct {
 	listener net.Listener
-	addr     string
+	Port     int
+	Addr     string
 	quitch   chan struct{}
+	RDB      persistence.RedisDB
+	Config   *config.Config
 }
 
-func New(addr string) (*Server, error) {
+func New(addr string, port int, dir, dbfilename string) (*Server, error) {
 	return &Server{
-		addr:   addr,
+		Port:   port,
+		Addr:   addr,
 		quitch: make(chan struct{}),
+		Config: config.New(dir, dbfilename),
 	}, nil
 }
 
 func (s *Server) Listen() error {
-	l, err := net.Listen("tcp", s.addr)
+	addr := fmt.Sprintf("%s:%d", s.Addr, s.Port)
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("failed to bind to %s: %w", s.addr, err)
+		return fmt.Errorf("failed to bind to port %d: %w", s.Port, err)
 	}
 	defer l.Close()
 	s.listener = l
 
-	fmt.Printf("Server listening on %s\n", s.addr)
+	fmt.Printf("Server listening on %s\n", addr)
 	go s.accept()
 	<-s.quitch
 	return nil
@@ -68,14 +76,14 @@ func (s *Server) handleConnection(conn net.Conn) {
 			fmt.Println("error parsing array:", err)
 			return
 		}
-		handleCommand(conn, commandArgs)
+		s.handleCommand(conn, commandArgs)
 	}
 }
 
-func handleCommand(conn net.Conn, s []string) {
-	command := strings.ToUpper(s[0])
+func (s *Server) handleCommand(conn net.Conn, args []string) {
+	command := strings.ToUpper(args[0])
 	cmd := handler.Commands[command]
 	if cmd != nil {
-		cmd(conn, s)
+		cmd(conn, args, s.Config)
 	}
 }
