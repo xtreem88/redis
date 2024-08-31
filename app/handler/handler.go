@@ -3,6 +3,9 @@ package handler
 import (
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/store"
 )
@@ -32,7 +35,20 @@ func set(conn net.Conn, args []string) error {
 		return fmt.Errorf("ERR wrong number of arguments for 'set' command")
 	}
 	key, value := args[1], args[2]
-	store.Set(key, value)
+	var expiry time.Duration
+
+	if len(args) > 3 && strings.ToUpper(args[3]) == "PX" {
+		if len(args) < 5 {
+			return fmt.Errorf("ERR syntax error")
+		}
+		ms, err := strconv.ParseInt(args[4], 10, 64)
+		if err != nil {
+			return fmt.Errorf("ERR value is not an integer or out of range")
+		}
+		expiry = time.Duration(ms) * time.Millisecond
+	}
+
+	store.SetWithExpiry(key, value, expiry)
 	_, err := fmt.Fprint(conn, encodeSimpleString("OK"))
 	return err
 }
