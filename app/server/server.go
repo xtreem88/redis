@@ -1,10 +1,14 @@
 package server
 
 import (
-	"errors"
+	"bufio"
 	"fmt"
 	"io"
 	"net"
+	"strings"
+
+	"github.com/codecrafters-io/redis-starter-go/app/handler"
+	"github.com/codecrafters-io/redis-starter-go/app/parser"
 )
 
 type Server struct {
@@ -48,21 +52,28 @@ func (s *Server) accept() {
 func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 	fmt.Printf("New connection from %s\n", conn.RemoteAddr())
+	reader := bufio.NewReader(conn)
 	for {
-		buf := make([]byte, 1024)
-		n, err := conn.Read(buf)
-		if errors.Is(err, io.EOF) {
-			fmt.Printf("Client closed the connection: %s\n", conn.RemoteAddr())
-			break
-		} else if err != nil {
-			fmt.Printf("Error reading from connection: %v\n", err)
-			break
+		_, err := reader.ReadByte()
+		if err == io.EOF {
+			return
 		}
-		fmt.Printf("Received: %s", buf[:n])
-		_, err = conn.Write([]byte("+PONG\r\n"))
 		if err != nil {
-			fmt.Printf("Error writing to connection: %v\n", err)
-			break
+			fmt.Println("error parsing the data type:", err)
+			return
 		}
+
+		commandArgs, err := parser.ParseArray(reader)
+		if err != nil {
+			fmt.Println("error parsing array:", err)
+			return
+		}
+		handleCommand(conn, commandArgs)
 	}
+}
+
+func handleCommand(conn net.Conn, s []string) {
+	command := strings.ToUpper(s[0])
+	cmd := handler.Commands[command]
+	cmd(conn, s)
 }
