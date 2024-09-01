@@ -15,6 +15,8 @@ type ServerInfo interface {
 	GetRole() string
 	GetMasterHost() string
 	GetMasterPort() int
+	GetMasterReplID() string
+	GetMasterReplOffset() int64
 }
 
 type Command interface {
@@ -196,10 +198,14 @@ func (c *InfoCommand) Execute(conn net.Conn, args []string) error {
 	}
 
 	response := fmt.Sprintf("role:%s\r\n", c.server.GetRole())
+	response += fmt.Sprintf("master_replid:%s\r\n", c.server.GetMasterReplID())
+	response += fmt.Sprintf("master_repl_offset:%d\r\n", c.server.GetMasterReplOffset())
+
 	if c.server.GetRole() == "slave" {
 		response += fmt.Sprintf("master_host:%s\r\n", c.server.GetMasterHost())
 		response += fmt.Sprintf("master_port:%d\r\n", c.server.GetMasterPort())
 	}
+
 	encodedResponse := fmt.Sprintf("$%d\r\n%s\r\n", len(response), response)
 
 	_, err := fmt.Fprint(conn, encodedResponse)

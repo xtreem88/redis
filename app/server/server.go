@@ -14,14 +14,16 @@ import (
 )
 
 type Server struct {
-	listener   net.Listener
-	Port       int
-	Addr       string
-	RDB        *persistence.RDB
-	Config     *config.Config
-	role       string
-	masterHost string
-	masterPort int
+	listener         net.Listener
+	Port             int
+	Addr             string
+	RDB              *persistence.RDB
+	Config           *config.Config
+	role             string
+	masterHost       string
+	masterPort       int
+	masterReplID     string
+	masterReplOffset int64
 
 	quitch  chan struct{}
 	handler *handler.Handler
@@ -35,12 +37,14 @@ func New(addr string, port int, dir, dbfilename string, replicaof string) (*Serv
 	}
 
 	s := &Server{
-		Port:   port,
-		Addr:   addr,
-		quitch: make(chan struct{}),
-		Config: cfg,
-		RDB:    rdb,
-		role:   "master",
+		Port:             port,
+		Addr:             addr,
+		quitch:           make(chan struct{}),
+		Config:           cfg,
+		RDB:              rdb,
+		role:             "master",
+		masterReplID:     "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
+		masterReplOffset: 0,
 	}
 
 	if replicaof != "" {
@@ -68,6 +72,14 @@ func (s *Server) GetMasterHost() string {
 
 func (s *Server) GetMasterPort() int {
 	return s.masterPort
+}
+
+func (s *Server) GetMasterReplID() string {
+	return s.masterReplID
+}
+
+func (s *Server) GetMasterReplOffset() int64 {
+	return s.masterReplOffset
 }
 
 func (s *Server) Listen() error {
