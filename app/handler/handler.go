@@ -67,6 +67,8 @@ func (h *Handler) getCommand(name string) Command {
 		return &KeysCommand{rdb: h.rdb}
 	case "INFO":
 		return &InfoCommand{server: h.server}
+	case "REPLCONF":
+		return &ReplconfCommand{}
 	default:
 		return nil
 	}
@@ -209,6 +211,13 @@ func (c *InfoCommand) Execute(conn net.Conn, args []string) error {
 	encodedResponse := fmt.Sprintf("$%d\r\n%s\r\n", len(response), response)
 
 	_, err := fmt.Fprint(conn, encodedResponse)
+	return err
+}
+
+type ReplconfCommand struct{}
+
+func (c *ReplconfCommand) Execute(conn net.Conn, args []string) error {
+	_, err := conn.Write([]byte("+OK\r\n"))
 	return err
 }
 
