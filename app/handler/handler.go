@@ -18,6 +18,7 @@ var Commands = map[string]func(conn net.Conn, args []string, cfg *config.Config,
 	"GET":    get,
 	"CONFIG": configCmd,
 	"KEYS":   keys,
+	"INFO":   info,
 }
 
 func ping(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RDB) error {
@@ -114,6 +115,18 @@ func keys(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RDB
 	}
 
 	_, err := fmt.Fprint(conn, response)
+	return err
+}
+
+func info(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RDB) error {
+	if len(args) != 2 || strings.ToLower(args[1]) != "replication" {
+		return fmt.Errorf("ERR wrong number of arguments for 'info' command")
+	}
+
+	response := "role:master\r\n"
+	encodedResponse := fmt.Sprintf("$%d\r\n%s\r\n", len(response), response)
+
+	_, err := fmt.Fprint(conn, encodedResponse)
 	return err
 }
 
