@@ -7,28 +7,30 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
-type RedisDB struct {
+type RDB struct {
 	version string
 	index   byte
 	data    map[string]string
 	expires map[string]time.Time
+	mu      sync.RWMutex
 }
 
-func LoadRDB(dir, filename string) (*RedisDB, error) {
+func LoadRDB(dir, filename string) (*RDB, error) {
 	path := filepath.Join(dir, filename)
 	file, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &RedisDB{data: make(map[string]string), expires: make(map[string]time.Time)}, nil
+			return &RDB{data: make(map[string]string), expires: make(map[string]time.Time)}, nil
 		}
 		return nil, err
 	}
 	defer file.Close()
 
-	rdb := &RedisDB{
+	rdb := &RDB{
 		data:    make(map[string]string),
 		expires: make(map[string]time.Time),
 	}
@@ -38,7 +40,7 @@ func LoadRDB(dir, filename string) (*RedisDB, error) {
 	return rdb, nil
 }
 
-func (rdb *RedisDB) parse(f *os.File) error {
+func (rdb *RDB) parse(f *os.File) error {
 	reader := bufio.NewReader(f)
 
 	// Read and validate header
@@ -47,7 +49,7 @@ func (rdb *RedisDB) parse(f *os.File) error {
 		return err
 	}
 	if string(header[:5]) != "REDIS" {
-		return fmt.Errorf("invalid RedisDB file format")
+		return fmt.Errorf("invalid RDB file format")
 	}
 	rdb.version = string(header[5:])
 
@@ -74,14 +76,17 @@ func (rdb *RedisDB) parse(f *os.File) error {
 		return err
 	}
 
-	// Read key-value pairs
+	// Read key-value pair
 	for {
 		b, err := reader.ReadByte()
+		if err == io.EOF {
+			break
+		}
 		if err != nil {
 			return err
 		}
 		if b == 0xFF {
-			break // End of RedisDB file
+			break // End of RDB file
 		}
 
 		var key, value string
@@ -108,7 +113,7 @@ func (rdb *RedisDB) parse(f *os.File) error {
 		if err != nil {
 			return err
 		}
-		value, err = readString(reader)
+		value, err = readLengthPrefixedString(reader)
 		if err != nil {
 			return err
 		}
@@ -120,6 +125,40 @@ func (rdb *RedisDB) parse(f *os.File) error {
 	}
 
 	return nil
+}
+
+func readLengthPrefixedString(r *bufio.Reader) (string, error) {
+	length, err := readLength(r)
+	if err != nil {
+		return "", err
+	}
+
+	str := make([]byte, length)
+	if _, err := io.ReadFull(r, str); err != nil {
+		return "", err
+	}
+
+	return string(str), nil
+}
+
+func readLength(r *bufio.Reader) (int, error) {
+	b, err := r.ReadByte()
+	if err != nil {
+		return 0, err
+	}
+
+	// Handle length-prefixed strings only
+	if b>>6 == 0 {
+		return int(b & 0x3F), nil
+	} else if b>>6 == 1 {
+		next, err := r.ReadByte()
+		if err != nil {
+			return 0, err
+		}
+		return (int(b&0x3F) << 8) | int(next), nil
+	}
+
+	return 0, fmt.Errorf("unsupported length encoding")
 }
 
 func parseSize(r *bufio.Reader) (int, error) {
@@ -170,7 +209,9 @@ func readUint64(r *bufio.Reader) (uint64, error) {
 	return binary.LittleEndian.Uint64(buf), nil
 }
 
-func (rdb *RedisDB) Get(key string) (string, bool) {
+func (rdb *RDB) Get(key string) (string, bool) {
+	rdb.mu.RLock()
+	defer rdb.mu.RUnlock()
 	value, ok := rdb.data[key]
 	if !ok {
 		return "", false
@@ -185,7 +226,20 @@ func (rdb *RedisDB) Get(key string) (string, bool) {
 	return value, true
 }
 
-func (rdb *RedisDB) GetKeys() []string {
+func (rdb *RDB) Set(key, value string, expiry *time.Time) {
+	rdb.mu.Lock()
+	defer rdb.mu.Unlock()
+	rdb.data[key] = value
+	if expiry != nil {
+		rdb.expires[key] = *expiry
+	} else {
+		delete(rdb.expires, key)
+	}
+}
+
+func (rdb *RDB) GetKeys() []string {
+	rdb.mu.RLock()
+	defer rdb.mu.RUnlock()
 	keys := make([]string, 0, len(rdb.data))
 	for k := range rdb.data {
 		if expiry, ok := rdb.expires[k]; !ok || time.Now().Before(expiry) {

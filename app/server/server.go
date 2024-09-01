@@ -18,7 +18,7 @@ type Server struct {
 	Port     int
 	Addr     string
 	quitch   chan struct{}
-	RDB      *persistence.RedisDB
+	RDB      *persistence.RDB
 	Config   *config.Config
 }
 

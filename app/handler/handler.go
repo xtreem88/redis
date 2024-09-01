@@ -9,10 +9,9 @@ import (
 
 	"github.com/codecrafters-io/redis-starter-go/app/config"
 	"github.com/codecrafters-io/redis-starter-go/app/persistence"
-	"github.com/codecrafters-io/redis-starter-go/app/store"
 )
 
-var Commands = map[string]func(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RedisDB) error{
+var Commands = map[string]func(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RDB) error{
 	"PING":   ping,
 	"ECHO":   echo,
 	"SET":    set,
@@ -21,12 +20,12 @@ var Commands = map[string]func(conn net.Conn, args []string, cfg *config.Config,
 	"KEYS":   keys,
 }
 
-func ping(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RedisDB) error {
+func ping(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RDB) error {
 	_, err := fmt.Fprint(conn, encodeSimpleString("PONG"))
 	return err
 }
 
-func echo(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RedisDB) error {
+func echo(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RDB) error {
 	if len(args) < 2 {
 		return fmt.Errorf("ERR wrong number of arguments for 'echo' command")
 	}
@@ -34,43 +33,48 @@ func echo(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.Red
 	return err
 }
 
-func set(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RedisDB) error {
-	if len(args) < 3 {
+func set(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RDB) error {
+	if len(args) < 3 || len(args) > 5 {
 		return fmt.Errorf("ERR wrong number of arguments for 'set' command")
 	}
-	key, value := args[1], args[2]
-	var expiry time.Duration
 
-	if len(args) > 3 && strings.ToUpper(args[3]) == "PX" {
-		if len(args) < 5 {
-			return fmt.Errorf("ERR syntax error")
-		}
+	key := args[1]
+	value := args[2]
+	var expiry *time.Time
+
+	if len(args) == 5 && strings.ToUpper(args[3]) == "PX" {
 		ms, err := strconv.ParseInt(args[4], 10, 64)
 		if err != nil {
-			return fmt.Errorf("ERR value is not an integer or out of range")
+			return fmt.Errorf("ERR invalid expire time in 'set' command")
 		}
-		expiry = time.Duration(ms) * time.Millisecond
+		t := time.Now().Add(time.Duration(ms) * time.Millisecond)
+		expiry = &t
 	}
 
-	store.SetWithExpiry(key, value, expiry)
-	_, err := fmt.Fprint(conn, encodeSimpleString("OK"))
+	rdb.Set(key, value, expiry)
+
+	_, err := fmt.Fprint(conn, "+OK\r\n")
 	return err
 }
 
-func get(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RedisDB) error {
-	if len(args) < 2 {
+func get(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RDB) error {
+	if len(args) != 2 {
 		return fmt.Errorf("ERR wrong number of arguments for 'get' command")
 	}
-	value, ok := store.Get(args[1])
+
+	key := args[1]
+	value, ok := rdb.Get(key)
 	if !ok {
 		_, err := fmt.Fprint(conn, "$-1\r\n")
 		return err
 	}
-	_, err := fmt.Fprint(conn, encodeBulkString(value))
+
+	response := fmt.Sprintf("$%d\r\n%s\r\n", len(value), value)
+	_, err := fmt.Fprint(conn, response)
 	return err
 }
 
-func configCmd(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RedisDB) error {
+func configCmd(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RDB) error {
 	if len(args) < 2 {
 		return fmt.Errorf("ERR wrong number of arguments for 'config' command")
 	}
@@ -93,7 +97,7 @@ func configCmd(conn net.Conn, args []string, cfg *config.Config, rdb *persistenc
 	return err
 }
 
-func keys(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RedisDB) error {
+func keys(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RDB) error {
 	if len(args) < 2 {
 		return fmt.Errorf("ERR wrong number of arguments for 'keys' command")
 	}
