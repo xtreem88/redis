@@ -69,6 +69,8 @@ func (h *Handler) getCommand(name string) Command {
 		return &InfoCommand{server: h.server}
 	case "REPLCONF":
 		return &ReplconfCommand{}
+	case "PSYNC":
+		return &PsyncCommand{server: h.server}
 	default:
 		return nil
 	}
@@ -218,6 +220,23 @@ type ReplconfCommand struct{}
 
 func (c *ReplconfCommand) Execute(conn net.Conn, args []string) error {
 	_, err := conn.Write([]byte("+OK\r\n"))
+	return err
+}
+
+type PsyncCommand struct {
+	server ServerInfo
+}
+
+func (c *PsyncCommand) Execute(conn net.Conn, args []string) error {
+	if len(args) != 2 {
+		return fmt.Errorf("ERR wrong number of arguments for 'psync' command")
+	}
+
+	// Ignore the arguments and always respond with FULLRESYNC
+	replID := c.server.GetMasterReplID()
+	offset := c.server.GetMasterReplOffset()
+	response := fmt.Sprintf("+FULLRESYNC %s %d\r\n", replID, offset)
+	_, err := conn.Write([]byte(response))
 	return err
 }
 
