@@ -18,6 +18,9 @@ type ServerInfo interface {
 	GetMasterReplID() string
 	GetMasterReplOffset() int64
 	SendEmptyRDBFile(conn net.Conn) error
+	PropagateCommand(args []string)
+	AddReplica(conn net.Conn)
+	RemoveReplica(conn net.Conn)
 }
 
 type Command interface {
@@ -49,7 +52,20 @@ func (h *Handler) Handle(conn net.Conn, args []string) error {
 		return fmt.Errorf("ERR unknown command '%s'", cmdName)
 	}
 
-	return cmd.Execute(conn, args[1:])
+	err := cmd.Execute(conn, args[1:])
+	if err == nil && h.server.GetRole() == "master" && h.IsWriteCommand(cmdName) {
+		h.server.PropagateCommand(args)
+	}
+
+	return err
+}
+
+func (h *Handler) IsWriteCommand(command string) bool {
+	writeCommands := map[string]bool{
+		"SET": true,
+		"DEL": true,
+	}
+	return writeCommands[strings.ToUpper(command)]
 }
 
 func (h *Handler) getCommand(name string) Command {
@@ -245,6 +261,8 @@ func (c *PsyncCommand) Execute(conn net.Conn, args []string) error {
 	if err := c.server.SendEmptyRDBFile(conn); err != nil {
 		return fmt.Errorf("failed to send empty RDB file: %w", err)
 	}
+
+	c.server.AddReplica(conn)
 
 	return nil
 }

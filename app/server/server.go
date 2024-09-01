@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 
 	"github.com/codecrafters-io/redis-starter-go/app/config"
 	"github.com/codecrafters-io/redis-starter-go/app/handler"
@@ -27,6 +28,8 @@ type Server struct {
 	masterReplOffset int64
 	masterConn       net.Conn
 	handler          *handler.Handler
+	replicas         []net.Conn
+	replicasMu       sync.RWMutex
 }
 
 func New(addr string, port int, dir, dbfilename string, replicaof string) (*Server, error) {
@@ -81,6 +84,10 @@ func (s *Server) GetMasterReplOffset() int64 {
 	return s.masterReplOffset
 }
 
+func (s *Server) IsReplica() bool {
+	return s.role == "slave"
+}
+
 func (s *Server) SendEmptyRDBFile(conn net.Conn) error {
 	// Empty RDB file in base64
 	emptyRDBBase64 := "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog=="
@@ -103,6 +110,49 @@ func (s *Server) SendEmptyRDBFile(conn net.Conn) error {
 	}
 
 	return nil
+}
+
+func (s *Server) AddReplica(conn net.Conn) {
+	s.replicasMu.Lock()
+	defer s.replicasMu.Unlock()
+	s.replicas = append(s.replicas, conn)
+	fmt.Printf("Added new replica: %s\n", conn.RemoteAddr())
+}
+
+func (s *Server) RemoveReplica(conn net.Conn) {
+	s.replicasMu.Lock()
+	defer s.replicasMu.Unlock()
+	for i, replica := range s.replicas {
+		if replica == conn {
+			s.replicas = append(s.replicas[:i], s.replicas[i+1:]...)
+			fmt.Printf("Removed replica: %s\n", conn.RemoteAddr())
+			break
+		}
+	}
+}
+
+func (s *Server) PropagateCommand(args []string) {
+	command := encodeRESPArray(args)
+	s.replicasMu.RLock()
+	defer s.replicasMu.RUnlock()
+	for _, replica := range s.replicas {
+		_, err := replica.Write([]byte(command))
+		if err != nil {
+			fmt.Printf("Error propagating command to replica %s: %v\n", replica.RemoteAddr(), err)
+			s.RemoveReplica(replica)
+		} else {
+			fmt.Printf("Propagated command to replica %s: %s", replica.RemoteAddr(), command)
+		}
+	}
+}
+
+func encodeRESPArray(args []string) string {
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("*%d\r\n", len(args)))
+	for _, arg := range args {
+		builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(arg), arg))
+	}
+	return builder.String()
 }
 
 func (s *Server) Listen() error {
@@ -134,14 +184,19 @@ func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 	fmt.Printf("New connection from %s\n", conn.RemoteAddr())
 	reader := bufio.NewReader(conn)
+
 	for {
-		_, err := reader.ReadByte()
+		commandType, err := reader.ReadByte()
 		if err == io.EOF {
 			return
 		}
 		if err != nil {
-			fmt.Println("error parsing the data type:", err)
+			fmt.Println("error reading command type:", err)
 			return
+		}
+
+		if commandType != '*' {
+			reader.UnreadByte()
 		}
 
 		commandArgs, err := parser.ParseArray(reader)
@@ -149,6 +204,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			fmt.Println("error parsing array:", err)
 			return
 		}
+
 		if err := s.handler.Handle(conn, commandArgs); err != nil {
 			fmt.Printf("Error handling command: %v\n", err)
 			return
