@@ -52,13 +52,24 @@ func (s *Server) sendHandshake(conn net.Conn) error {
 	fmt.Println("REPLCONF listening-port sent and OK received")
 
 	// Send second REPLCONF
-	if err := s.sendCommand(conn, "REPLCONF", "capa", "psync2"); err != nil {
+	if err := s.sendCommand(conn, "REPLCONF", "capa", "eof", "capa", "psync2"); err != nil {
 		return fmt.Errorf("failed to send REPLCONF capa: %w", err)
 	}
 	if err := s.readResponse(conn, "OK"); err != nil {
 		return fmt.Errorf("failed to receive OK after REPLCONF capa: %w", err)
 	}
-	fmt.Println("REPLCONF capa psync2 sent and OK received")
+	fmt.Println("REPLCONF capa eof capa psync2 sent and OK received")
+
+	// Send PSYNC
+	if err := s.sendCommand(conn, "PSYNC", "?", "-1"); err != nil {
+		return fmt.Errorf("failed to send PSYNC: %w", err)
+	}
+	// We're ignoring the response for now, as per the instructions
+	_, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read response after PSYNC: %w", err)
+	}
+	fmt.Println("PSYNC sent and response received (ignored)")
 
 	fmt.Println("Handshake completed successfully")
 	return nil
