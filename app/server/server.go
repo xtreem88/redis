@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"strings"
-	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/config"
 	"github.com/codecrafters-io/redis-starter-go/app/handler"
@@ -98,43 +97,6 @@ func (s *Server) Listen() error {
 
 	for {
 		conn, err := l.Accept()
-		if err != nil {
-			fmt.Printf("Error accepting connection: %v\n", err)
-			continue
-		}
-		go s.handleConnection(conn)
-	}
-}
-
-func (s *Server) connectToMaster() {
-	for {
-		conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", s.masterHost, s.masterPort))
-		if err != nil {
-			fmt.Printf("Failed to connect to master: %v. Retrying in 1 second...\n", err)
-			time.Sleep(time.Second)
-			continue
-		}
-
-		s.masterConn = conn
-		fmt.Printf("Connected to master at %s:%d\n", s.masterHost, s.masterPort)
-
-		// Send PING command
-		pingData := "*1\r\n$4\r\nPING\r\n"
-		_, err = conn.Write([]byte(pingData))
-		if err != nil {
-			fmt.Printf("Failed to send PING to master: %v\n", err)
-			conn.Close()
-			continue
-		}
-
-		fmt.Println("Sent PING to master")
-		select {}
-	}
-}
-
-func (s *Server) accept() {
-	for {
-		conn, err := s.listener.Accept()
 		if err != nil {
 			fmt.Printf("Error accepting connection: %v\n", err)
 			continue
