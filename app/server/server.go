@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
@@ -78,6 +79,30 @@ func (s *Server) GetMasterReplID() string {
 
 func (s *Server) GetMasterReplOffset() int64 {
 	return s.masterReplOffset
+}
+
+func (s *Server) SendEmptyRDBFile(conn net.Conn) error {
+	// Empty RDB file in base64
+	emptyRDBBase64 := "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog=="
+
+	// Decode base64 to binary
+	emptyRDB, err := base64.StdEncoding.DecodeString(emptyRDBBase64)
+	if err != nil {
+		return fmt.Errorf("failed to decode empty RDB file: %w", err)
+	}
+
+	// Send the length of the RDB file
+	length := len(emptyRDB)
+	if _, err := fmt.Fprintf(conn, "$%d\r\n", length); err != nil {
+		return fmt.Errorf("failed to send RDB file length: %w", err)
+	}
+
+	// Send the RDB file contents
+	if _, err := conn.Write(emptyRDB); err != nil {
+		return fmt.Errorf("failed to send RDB file contents: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Server) Listen() error {

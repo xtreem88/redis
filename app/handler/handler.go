@@ -17,6 +17,7 @@ type ServerInfo interface {
 	GetMasterPort() int
 	GetMasterReplID() string
 	GetMasterReplOffset() int64
+	SendEmptyRDBFile(conn net.Conn) error
 }
 
 type Command interface {
@@ -232,12 +233,20 @@ func (c *PsyncCommand) Execute(conn net.Conn, args []string) error {
 		return fmt.Errorf("ERR wrong number of arguments for 'psync' command")
 	}
 
-	// Ignore the arguments and always respond with FULLRESYNC
 	replID := c.server.GetMasterReplID()
 	offset := c.server.GetMasterReplOffset()
 	response := fmt.Sprintf("+FULLRESYNC %s %d\r\n", replID, offset)
 	_, err := conn.Write([]byte(response))
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to send FULLRESYNC response: %w", err)
+	}
+
+	// Trigger sending of RDB file
+	if err := c.server.SendEmptyRDBFile(conn); err != nil {
+		return fmt.Errorf("failed to send empty RDB file: %w", err)
+	}
+
+	return nil
 }
 
 func encodeSimpleString(s string) string {
