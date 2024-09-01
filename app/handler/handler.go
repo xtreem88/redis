@@ -8,23 +8,25 @@ import (
 	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/config"
+	"github.com/codecrafters-io/redis-starter-go/app/persistence"
 	"github.com/codecrafters-io/redis-starter-go/app/store"
 )
 
-var Commands = map[string]func(conn net.Conn, args []string, cfg *config.Config) error{
+var Commands = map[string]func(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RedisDB) error{
 	"PING":   ping,
 	"ECHO":   echo,
 	"SET":    set,
 	"GET":    get,
 	"CONFIG": configCmd,
+	"KEYS":   keys,
 }
 
-func ping(conn net.Conn, args []string, cfg *config.Config) error {
+func ping(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RedisDB) error {
 	_, err := fmt.Fprint(conn, encodeSimpleString("PONG"))
 	return err
 }
 
-func echo(conn net.Conn, args []string, cfg *config.Config) error {
+func echo(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RedisDB) error {
 	if len(args) < 2 {
 		return fmt.Errorf("ERR wrong number of arguments for 'echo' command")
 	}
@@ -32,7 +34,7 @@ func echo(conn net.Conn, args []string, cfg *config.Config) error {
 	return err
 }
 
-func set(conn net.Conn, args []string, cfg *config.Config) error {
+func set(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RedisDB) error {
 	if len(args) < 3 {
 		return fmt.Errorf("ERR wrong number of arguments for 'set' command")
 	}
@@ -55,7 +57,7 @@ func set(conn net.Conn, args []string, cfg *config.Config) error {
 	return err
 }
 
-func get(conn net.Conn, args []string, cfg *config.Config) error {
+func get(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RedisDB) error {
 	if len(args) < 2 {
 		return fmt.Errorf("ERR wrong number of arguments for 'get' command")
 	}
@@ -68,7 +70,7 @@ func get(conn net.Conn, args []string, cfg *config.Config) error {
 	return err
 }
 
-func configCmd(conn net.Conn, args []string, cfg *config.Config) error {
+func configCmd(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RedisDB) error {
 	if len(args) < 2 {
 		return fmt.Errorf("ERR wrong number of arguments for 'config' command")
 	}
@@ -87,6 +89,26 @@ func configCmd(conn net.Conn, args []string, cfg *config.Config) error {
 
 	// Encode the response as a RESP array
 	response := fmt.Sprintf("*2\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(param), param, len(value), value)
+	_, err := fmt.Fprint(conn, response)
+	return err
+}
+
+func keys(conn net.Conn, args []string, cfg *config.Config, rdb *persistence.RedisDB) error {
+	if len(args) < 2 {
+		return fmt.Errorf("ERR wrong number of arguments for 'keys' command")
+	}
+
+	pattern := args[1]
+	if pattern != "*" {
+		return fmt.Errorf("ERR only '*' pattern is supported")
+	}
+
+	keys := rdb.GetKeys()
+	response := fmt.Sprintf("*%d\r\n", len(keys))
+	for _, key := range keys {
+		response += fmt.Sprintf("$%d\r\n%s\r\n", len(key), key)
+	}
+
 	_, err := fmt.Fprint(conn, response)
 	return err
 }

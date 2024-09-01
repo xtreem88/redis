@@ -18,16 +18,22 @@ type Server struct {
 	Port     int
 	Addr     string
 	quitch   chan struct{}
-	RDB      persistence.RedisDB
+	RDB      *persistence.RedisDB
 	Config   *config.Config
 }
 
 func New(addr string, port int, dir, dbfilename string) (*Server, error) {
+	cfg := config.New(dir, dbfilename)
+	rdb, err := persistence.LoadRDB(cfg.Get("dir"), cfg.Get("dbfilename"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to load RDB: %w", err)
+	}
 	return &Server{
 		Port:   port,
 		Addr:   addr,
 		quitch: make(chan struct{}),
-		Config: config.New(dir, dbfilename),
+		Config: cfg,
+		RDB:    rdb,
 	}, nil
 }
 
@@ -84,6 +90,6 @@ func (s *Server) handleCommand(conn net.Conn, args []string) {
 	command := strings.ToUpper(args[0])
 	cmd := handler.Commands[command]
 	if cmd != nil {
-		cmd(conn, args, s.Config)
+		cmd(conn, args, s.Config, s.RDB)
 	}
 }
