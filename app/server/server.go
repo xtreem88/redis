@@ -51,7 +51,7 @@ func New(addr string, port int, dir, dbfilename string, replicaof string) (*Serv
 		isReplica:        replicaof != "",
 	}
 
-	if replicaof != "" {
+	if s.isReplica {
 		parts := strings.Split(replicaof, " ")
 		if len(parts) != 2 {
 			return nil, fmt.Errorf("invalid replicaof format")
