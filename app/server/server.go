@@ -14,27 +14,60 @@ import (
 )
 
 type Server struct {
-	listener net.Listener
-	Port     int
-	Addr     string
-	quitch   chan struct{}
-	RDB      *persistence.RDB
-	Config   *config.Config
+	listener   net.Listener
+	Port       int
+	Addr       string
+	RDB        *persistence.RDB
+	Config     *config.Config
+	role       string
+	masterHost string
+	masterPort int
+
+	quitch  chan struct{}
+	handler *handler.Handler
 }
 
-func New(addr string, port int, dir, dbfilename string) (*Server, error) {
+func New(addr string, port int, dir, dbfilename string, replicaof string) (*Server, error) {
 	cfg := config.New(dir, dbfilename)
-	rdb, err := persistence.LoadRDB(cfg.Get("dir"), cfg.Get("dbfilename"))
+	rdb, err := persistence.LoadRDB(dir, dbfilename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load RDB: %w", err)
 	}
-	return &Server{
+
+	s := &Server{
 		Port:   port,
 		Addr:   addr,
 		quitch: make(chan struct{}),
 		Config: cfg,
 		RDB:    rdb,
-	}, nil
+		role:   "master",
+	}
+
+	if replicaof != "" {
+		parts := strings.Split(replicaof, " ")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid replicaof format")
+		}
+		s.role = "slave"
+		s.masterHost = parts[0]
+		fmt.Sscan(parts[1], &s.masterPort)
+	}
+
+	s.handler = handler.NewHandler(cfg, rdb, s)
+
+	return s, nil
+}
+
+func (s *Server) GetRole() string {
+	return s.role
+}
+
+func (s *Server) GetMasterHost() string {
+	return s.masterHost
+}
+
+func (s *Server) GetMasterPort() int {
+	return s.masterPort
 }
 
 func (s *Server) Listen() error {
@@ -82,14 +115,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 			fmt.Println("error parsing array:", err)
 			return
 		}
-		s.handleCommand(conn, commandArgs)
-	}
-}
-
-func (s *Server) handleCommand(conn net.Conn, args []string) {
-	command := strings.ToUpper(args[0])
-	cmd := handler.Commands[command]
-	if cmd != nil {
-		cmd(conn, args, s.Config, s.RDB)
+		if err := s.handler.Handle(conn, commandArgs); err != nil {
+			fmt.Printf("Error handling command: %v\n", err)
+			return
+		}
 	}
 }
