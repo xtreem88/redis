@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -27,9 +28,42 @@ func (s *Server) connectToMaster() {
 			continue
 		}
 
-		// Keep the connection alive
-		select {}
+		if err := s.receiveRDBFile(conn); err != nil {
+			fmt.Printf("Failed to receive RDB file: %v\n", err)
+			conn.Close()
+			continue
+		}
+
+		go s.handleConnection(conn)
+		return
 	}
+}
+
+func (s *Server) receiveRDBFile(conn net.Conn) error {
+	reader := bufio.NewReader(conn)
+
+	// Read the RDB file size
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read RDB file size: %v", err)
+	}
+
+	size, err := strconv.Atoi(strings.TrimPrefix(strings.TrimSuffix(line, "\r\n"), "$"))
+	if err != nil {
+		return fmt.Errorf("invalid RDB file size: %v", err)
+	}
+
+	// Read the RDB file content
+	rdbContent := make([]byte, size)
+	_, err = io.ReadFull(reader, rdbContent)
+	if err != nil {
+		return fmt.Errorf("failed to read RDB file content: %v", err)
+	}
+
+	// Process the RDB file (in this case, we're just ignoring it)
+	fmt.Printf("Received RDB file of size %d bytes\n", size)
+
+	return nil
 }
 
 func (s *Server) sendHandshake(conn net.Conn) error {

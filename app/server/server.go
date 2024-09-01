@@ -30,6 +30,7 @@ type Server struct {
 	handler          *handler.Handler
 	replicas         []net.Conn
 	replicasMu       sync.RWMutex
+	isReplica        bool
 }
 
 func New(addr string, port int, dir, dbfilename string, replicaof string) (*Server, error) {
@@ -47,6 +48,7 @@ func New(addr string, port int, dir, dbfilename string, replicaof string) (*Serv
 		role:             "master",
 		masterReplID:     "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
 		masterReplOffset: 0,
+		isReplica:        replicaof != "",
 	}
 
 	if replicaof != "" {
@@ -205,9 +207,17 @@ func (s *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
-		if err := s.handler.Handle(conn, commandArgs); err != nil {
-			fmt.Printf("Error handling command: %v\n", err)
-			return
+		if s.isReplica && conn == s.masterConn {
+			// Process command from master without sending a response
+			if err := s.handler.HandleReplicaCommand(commandArgs); err != nil {
+				fmt.Printf("Error handling replica command: %v\n", err)
+			}
+		} else {
+			// Handle regular client command
+			if err := s.handler.Handle(conn, commandArgs); err != nil {
+				fmt.Printf("Error handling command: %v\n", err)
+				return
+			}
 		}
 	}
 }
