@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/config"
 	"github.com/codecrafters-io/redis-starter-go/app/handler"
@@ -24,9 +25,8 @@ type Server struct {
 	masterPort       int
 	masterReplID     string
 	masterReplOffset int64
-
-	quitch  chan struct{}
-	handler *handler.Handler
+	masterConn       net.Conn
+	handler          *handler.Handler
 }
 
 func New(addr string, port int, dir, dbfilename string, replicaof string) (*Server, error) {
@@ -39,7 +39,6 @@ func New(addr string, port int, dir, dbfilename string, replicaof string) (*Serv
 	s := &Server{
 		Port:             port,
 		Addr:             addr,
-		quitch:           make(chan struct{}),
 		Config:           cfg,
 		RDB:              rdb,
 		role:             "master",
@@ -92,9 +91,45 @@ func (s *Server) Listen() error {
 	s.listener = l
 
 	fmt.Printf("Server listening on %s\n", addr)
-	go s.accept()
-	<-s.quitch
-	return nil
+
+	if s.role == "slave" {
+		go s.connectToMaster()
+	}
+
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			fmt.Printf("Error accepting connection: %v\n", err)
+			continue
+		}
+		go s.handleConnection(conn)
+	}
+}
+
+func (s *Server) connectToMaster() {
+	for {
+		conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", s.masterHost, s.masterPort))
+		if err != nil {
+			fmt.Printf("Failed to connect to master: %v. Retrying in 1 second...\n", err)
+			time.Sleep(time.Second)
+			continue
+		}
+
+		s.masterConn = conn
+		fmt.Printf("Connected to master at %s:%d\n", s.masterHost, s.masterPort)
+
+		// Send PING command
+		pingData := "*1\r\n$4\r\nPING\r\n"
+		_, err = conn.Write([]byte(pingData))
+		if err != nil {
+			fmt.Printf("Failed to send PING to master: %v\n", err)
+			conn.Close()
+			continue
+		}
+
+		fmt.Println("Sent PING to master")
+		select {}
+	}
 }
 
 func (s *Server) accept() {
