@@ -90,6 +90,10 @@ func (s *Server) IsReplica() bool {
 	return s.role == "slave"
 }
 
+func (s *Server) GetMasterConn() net.Conn {
+	return s.masterConn
+}
+
 func (s *Server) SendEmptyRDBFile(conn net.Conn) error {
 	// Empty RDB file in base64
 	emptyRDBBase64 := "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog=="
@@ -178,6 +182,7 @@ func (s *Server) Listen() error {
 			fmt.Printf("Error accepting connection: %v\n", err)
 			continue
 		}
+		s.masterConn = conn
 		go s.handleConnection(conn)
 	}
 }
@@ -185,6 +190,15 @@ func (s *Server) Listen() error {
 func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 	fmt.Printf("New connection from %s\n", conn.RemoteAddr())
+
+	if s.role == "master" {
+		s.handleMasterConnection(conn)
+	} else {
+		s.handleSlaveConnection(conn)
+	}
+}
+
+func (s *Server) handleMasterConnection(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 
 	for {
@@ -207,17 +221,40 @@ func (s *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
-		if s.isReplica && conn == s.masterConn {
-			// Process command from master without sending a response
-			if err := s.handler.HandleReplicaCommand(commandArgs); err != nil {
-				fmt.Printf("Error handling replica command: %v\n", err)
-			}
-		} else {
-			// Handle regular client command
-			if err := s.handler.Handle(conn, commandArgs); err != nil {
-				fmt.Printf("Error handling command: %v\n", err)
-				return
-			}
+		// Handle regular client command
+		if err := s.handler.Handle(conn, commandArgs); err != nil {
+			fmt.Printf("Error handling command: %v\n", err)
+			return
+		}
+	}
+}
+
+func (s *Server) handleSlaveConnection(conn net.Conn) {
+	reader := bufio.NewReader(conn)
+
+	for {
+		commandType, err := reader.ReadByte()
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			fmt.Println("error reading command type:", err)
+			return
+		}
+
+		if commandType != '*' {
+			reader.UnreadByte()
+		}
+
+		commandArgs, err := parser.ParseArray(reader)
+		if err != nil {
+			fmt.Println("error parsing array:", err)
+			return
+		}
+
+		// Process command from master without sending a response
+		if err := s.handler.HandleReplicaCommand(conn, commandArgs); err != nil {
+			fmt.Printf("Error handling replica command: %v\n", err)
 		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/codecrafters-io/redis-starter-go/app/communicate"
 	"github.com/codecrafters-io/redis-starter-go/app/config"
 	"github.com/codecrafters-io/redis-starter-go/app/persistence"
 )
@@ -14,7 +15,7 @@ import (
 type PingCommand struct{}
 
 func (c *PingCommand) Execute(conn net.Conn, args []string) error {
-	return sendResponse(conn, "+PONG\r\n")
+	return communicate.SendResponse(conn, communicate.EncodeSimpleString("PONG"))
 }
 
 type EchoCommand struct{}
@@ -23,7 +24,7 @@ func (c *EchoCommand) Execute(conn net.Conn, args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("ERR wrong number of arguments for 'echo' command")
 	}
-	return sendResponse(conn, fmt.Sprintf("$%d\r\n%s\r\n", len(args[0]), args[0]))
+	return communicate.SendResponse(conn, communicate.EncodeSimpleString(args[0]))
 }
 
 type SetCommand struct {
@@ -50,7 +51,7 @@ func (c *SetCommand) Execute(conn net.Conn, args []string) error {
 
 	c.rdb.Set(key, value, expiry)
 
-	return sendResponse(conn, "+OK\r\n")
+	return communicate.SendResponse(conn, communicate.EncodeSimpleString("OK"))
 }
 
 type GetCommand struct {
@@ -65,10 +66,10 @@ func (c *GetCommand) Execute(conn net.Conn, args []string) error {
 	key := args[0]
 	value, ok := c.rdb.Get(key)
 	if !ok {
-		return sendResponse(conn, "$-1\r\n")
+		return communicate.SendResponse(conn, "$-1\r\n")
 	}
 
-	return sendResponse(conn, fmt.Sprintf("$%d\r\n%s\r\n", len(value), value))
+	return communicate.SendResponse(conn, communicate.EncodeSimpleString(value))
 }
 
 type ConfigCommand struct {
@@ -93,7 +94,7 @@ func (c *ConfigCommand) Execute(conn net.Conn, args []string) error {
 	value := c.cfg.Get(param)
 
 	response := fmt.Sprintf("*2\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(param), param, len(value), value)
-	return sendResponse(conn, response)
+	return communicate.SendResponse(conn, response)
 }
 
 type KeysCommand struct {
@@ -116,7 +117,7 @@ func (c *KeysCommand) Execute(conn net.Conn, args []string) error {
 		response += fmt.Sprintf("$%d\r\n%s\r\n", len(key), key)
 	}
 
-	return sendResponse(conn, response)
+	return communicate.SendResponse(conn, response)
 }
 
 type InfoCommand struct {
@@ -139,13 +140,7 @@ func (c *InfoCommand) Execute(conn net.Conn, args []string) error {
 
 	encodedResponse := fmt.Sprintf("$%d\r\n%s\r\n", len(response), response)
 
-	return sendResponse(conn, encodedResponse)
-}
-
-type ReplconfCommand struct{}
-
-func (c *ReplconfCommand) Execute(conn net.Conn, args []string) error {
-	return sendResponse(conn, "+OK\r\n")
+	return communicate.SendResponse(conn, encodedResponse)
 }
 
 type PsyncCommand struct {
@@ -160,7 +155,7 @@ func (c *PsyncCommand) Execute(conn net.Conn, args []string) error {
 	replID := c.server.GetMasterReplID()
 	offset := c.server.GetMasterReplOffset()
 	response := fmt.Sprintf("+FULLRESYNC %s %d\r\n", replID, offset)
-	if err := sendResponse(conn, response); err != nil {
+	if err := communicate.SendResponse(conn, response); err != nil {
 		return fmt.Errorf("failed to send FULLRESYNC response: %w", err)
 	}
 
@@ -174,10 +169,26 @@ func (c *PsyncCommand) Execute(conn net.Conn, args []string) error {
 	return nil
 }
 
-func sendResponse(conn net.Conn, response string) error {
-	if conn == nil {
-		return nil
+type ReplconfCommand struct {
+	server ServerInfo
+}
+
+func (c *ReplconfCommand) Execute(conn net.Conn, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("ERR wrong number of arguments for 'replconf' command")
 	}
-	_, err := conn.Write([]byte(response))
-	return err
+
+	subcommand := strings.ToLower(args[0])
+	switch subcommand {
+	case "getack":
+		// This is a command from the master, we need to respond
+		offset := 0 // Hardcoded to 0 for now
+		response := fmt.Sprintf("*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n%d\r\n", offset)
+		_, err := conn.Write([]byte(response))
+		return err
+
+	default:
+		fmt.Printf("unknown REPLCONF subcommand '%s'", subcommand)
+		return communicate.SendResponse(conn, communicate.EncodeSimpleString("OK"))
+	}
 }

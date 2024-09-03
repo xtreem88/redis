@@ -19,6 +19,8 @@ type ServerInfo interface {
 	PropagateCommand(args []string)
 	AddReplica(conn net.Conn)
 	RemoveReplica(conn net.Conn)
+	GetMasterConn() net.Conn
+	SendCommand(conn net.Conn, args ...string) error
 }
 
 type Command interface {
@@ -58,7 +60,7 @@ func (h *Handler) Handle(conn net.Conn, args []string) error {
 	return err
 }
 
-func (h *Handler) HandleReplicaCommand(args []string) error {
+func (h *Handler) HandleReplicaCommand(conn net.Conn, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("ERR no command provided")
 	}
@@ -69,12 +71,7 @@ func (h *Handler) HandleReplicaCommand(args []string) error {
 		return fmt.Errorf("ERR unknown command '%s'", cmdName)
 	}
 
-	if h.IsWriteCommand(cmdName) {
-		fmt.Println("=============", args)
-		return cmd.Execute(nil, args[1:])
-	}
-
-	return nil
+	return cmd.Execute(conn, args[1:])
 }
 
 func (h *Handler) IsWriteCommand(command string) bool {
@@ -108,12 +105,4 @@ func (h *Handler) getCommand(name string) Command {
 	default:
 		return nil
 	}
-}
-
-func encodeSimpleString(s string) string {
-	return fmt.Sprintf("+%s\r\n", s)
-}
-
-func encodeBulkString(s string) string {
-	return fmt.Sprintf("$%d\r\n%s\r\n", len(s), s)
 }

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/codecrafters-io/redis-starter-go/app/communicate"
 )
 
 func (s *Server) connectToMaster() {
@@ -33,8 +35,7 @@ func (s *Server) connectToMaster() {
 			conn.Close()
 			continue
 		}
-
-		go s.handleConnection(conn)
+		go s.handleSlaveConnection(conn)
 		return
 	}
 }
@@ -68,34 +69,34 @@ func (s *Server) receiveRDBFile(conn net.Conn) error {
 
 func (s *Server) sendHandshake(conn net.Conn) error {
 	// Send PING
-	if err := s.sendCommand(conn, "PING"); err != nil {
+	if err := s.SendCommand(conn, "PING"); err != nil {
 		return fmt.Errorf("failed to send PING: %w", err)
 	}
-	if err := s.readResponse(conn, "PONG"); err != nil {
+	if err := communicate.ReadResponse(conn, "PONG"); err != nil {
 		return fmt.Errorf("failed to receive PONG after PING: %w", err)
 	}
 	fmt.Println("PING sent and PONG received")
 
 	// Send first REPLCONF
-	if err := s.sendCommand(conn, "REPLCONF", "listening-port", strconv.Itoa(s.Port)); err != nil {
+	if err := s.SendCommand(conn, "REPLCONF", "listening-port", strconv.Itoa(s.Port)); err != nil {
 		return fmt.Errorf("failed to send REPLCONF listening-port: %w", err)
 	}
-	if err := s.readResponse(conn, "OK"); err != nil {
+	if err := communicate.ReadResponse(conn, "OK"); err != nil {
 		return fmt.Errorf("failed to receive OK after REPLCONF listening-port: %w", err)
 	}
 	fmt.Println("REPLCONF listening-port sent and OK received")
 
 	// Send second REPLCONF
-	if err := s.sendCommand(conn, "REPLCONF", "capa", "eof", "capa", "psync2"); err != nil {
+	if err := s.SendCommand(conn, "REPLCONF", "capa", "eof", "capa", "psync2"); err != nil {
 		return fmt.Errorf("failed to send REPLCONF capa: %w", err)
 	}
-	if err := s.readResponse(conn, "OK"); err != nil {
+	if err := communicate.ReadResponse(conn, "OK"); err != nil {
 		return fmt.Errorf("failed to receive OK after REPLCONF capa: %w", err)
 	}
 	fmt.Println("REPLCONF capa eof capa psync2 sent and OK received")
 
 	// Send PSYNC
-	if err := s.sendCommand(conn, "PSYNC", "?", "-1"); err != nil {
+	if err := s.SendCommand(conn, "PSYNC", "?", "-1"); err != nil {
 		return fmt.Errorf("failed to send PSYNC: %w", err)
 	}
 	// We're ignoring the response for now, as per the instructions
@@ -109,23 +110,11 @@ func (s *Server) sendHandshake(conn net.Conn) error {
 	return nil
 }
 
-func (s *Server) sendCommand(conn net.Conn, args ...string) error {
+func (s *Server) SendCommand(conn net.Conn, args ...string) error {
 	cmd := fmt.Sprintf("*%d\r\n", len(args))
 	for _, arg := range args {
 		cmd += fmt.Sprintf("$%d\r\n%s\r\n", len(arg), arg)
 	}
 	_, err := conn.Write([]byte(cmd))
 	return err
-}
-
-func (s *Server) readResponse(conn net.Conn, expected string) error {
-	reader := bufio.NewReader(conn)
-	resp, err := reader.ReadString('\n')
-	if err != nil {
-		return err
-	}
-	if !strings.HasPrefix(resp, "+"+expected) {
-		return fmt.Errorf("expected +%s, got %q", expected, resp)
-	}
-	return nil
 }
