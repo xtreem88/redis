@@ -179,7 +179,7 @@ func (c *ReplconfCommand) Execute(conn net.Conn, args []string) error {
 	}
 
 	subcommand := strings.ToLower(args[0])
-	fmt.Println("Received REPLCONF command", subcommand)
+	fmt.Println("====Received REPLCONF command", subcommand)
 	switch subcommand {
 	case "getack":
 		// This is a command from the master, we need to respond
