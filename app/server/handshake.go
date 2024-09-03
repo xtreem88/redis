@@ -30,11 +30,6 @@ func (s *Server) connectToMaster() {
 			continue
 		}
 
-		if err := s.receiveRDBFile(conn); err != nil {
-			fmt.Printf("Failed to receive RDB file: %v\n", err)
-			conn.Close()
-			continue
-		}
 		go s.handleSlaveConnection(conn)
 		return
 	}
@@ -105,6 +100,10 @@ func (s *Server) sendHandshake(conn net.Conn) error {
 		return fmt.Errorf("failed to read response after PSYNC: %w", err)
 	}
 	fmt.Println("PSYNC sent and response received (ignored)")
+
+	if err := s.receiveRDBFile(conn); err != nil {
+		fmt.Printf("Failed to receive RDB file: %v\n", err)
+	}
 
 	fmt.Println("Handshake completed successfully")
 	return nil
