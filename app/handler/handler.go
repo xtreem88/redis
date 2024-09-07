@@ -15,6 +15,7 @@ type ServerInfo interface {
 	GetMasterPort() int
 	GetMasterReplID() string
 	GetMasterReplOffset() int64
+	UpdateMasterReplOffset() error
 	SendEmptyRDBFile(conn net.Conn) error
 	PropagateCommand(args []string)
 	AddReplica(conn net.Conn)
@@ -52,6 +53,8 @@ func (h *Handler) Handle(conn net.Conn, args []string) error {
 		return fmt.Errorf("ERR unknown command '%s'", cmdName)
 	}
 
+	fmt.Printf("Replica executing: %s %v\n", cmdName, args[1:])
+
 	err := cmd.Execute(conn, args[1:])
 	if err == nil && h.server.GetRole() == "master" && h.IsWriteCommand(cmdName) {
 		h.server.PropagateCommand(args)
@@ -71,7 +74,12 @@ func (h *Handler) HandleReplicaCommand(conn net.Conn, args []string) error {
 		return fmt.Errorf("ERR unknown command '%s'", cmdName)
 	}
 
-	return cmd.Execute(conn, args[1:])
+	var c net.Conn
+	if h.CanRespondToCommand(cmdName) {
+		c = conn
+	}
+	// Execute all commands without sending a response
+	return cmd.Execute(c, args[1:])
 }
 
 func (h *Handler) IsWriteCommand(command string) bool {
@@ -82,8 +90,21 @@ func (h *Handler) IsWriteCommand(command string) bool {
 	return writeCommands[strings.ToUpper(command)]
 }
 
+func (h *Handler) CanRespondToCommand(command string) bool {
+	cmds := map[string]bool{
+		"GET":      true,
+		"REPLCONF": true,
+		"PSYNC":    true,
+	}
+	return cmds[strings.ToUpper(command)]
+}
+
 func (h *Handler) getCommand(name string) Command {
 	switch name {
+	case "REPLCONF":
+		return &ReplconfCommand{server: h.server}
+	case "PSYNC":
+		return &PsyncCommand{server: h.server}
 	case "PING":
 		return &PingCommand{}
 	case "ECHO":
@@ -98,10 +119,6 @@ func (h *Handler) getCommand(name string) Command {
 		return &KeysCommand{rdb: h.rdb}
 	case "INFO":
 		return &InfoCommand{server: h.server}
-	case "REPLCONF":
-		return &ReplconfCommand{}
-	case "PSYNC":
-		return &PsyncCommand{server: h.server}
 	default:
 		return nil
 	}

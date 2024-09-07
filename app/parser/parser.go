@@ -7,46 +7,51 @@ import (
 	"strings"
 )
 
-func ParseArray(reader *bufio.Reader) ([]string, error) {
+func ParseArray(reader *bufio.Reader) ([]string, int, error) {
 	s, err := reader.ReadString('\n')
+	cmdSize := len(s) + 1
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	arrLength, err := strconv.Atoi(strings.TrimSpace(s))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	arr := make([]string, 0, arrLength)
 	for range arrLength {
-		element, err := parseArrayElement(reader)
+		element, l, err := parseArrayElement(reader)
+		cmdSize += l
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		arr = append(arr, element)
 	}
-	return arr, nil
+	return arr, cmdSize, nil
 }
-func parseArrayElement(reader *bufio.Reader) (string, error) {
+func parseArrayElement(reader *bufio.Reader) (string, int, error) {
 	_, err := reader.ReadByte()
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	s, err := reader.ReadString('\n')
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
+	cmdSize := len(s) + 1
 	length, err := strconv.Atoi(strings.TrimSpace(s))
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	element := make([]byte, length)
-	_, err = io.ReadFull(reader, element)
+	l, err := io.ReadFull(reader, element)
+	cmdSize += l
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	_, err = reader.Discard(2)
+	l, err = reader.Discard(2)
+	cmdSize += l
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	return string(element), nil
+	return string(element), cmdSize, nil
 }

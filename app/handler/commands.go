@@ -15,7 +15,12 @@ import (
 type PingCommand struct{}
 
 func (c *PingCommand) Execute(conn net.Conn, args []string) error {
-	return communicate.SendResponse(conn, communicate.EncodeSimpleString("PONG"))
+	response := "+PONG\r\n"
+	fmt.Println("==========Ping Response", response)
+	if conn != nil {
+		return communicate.SendResponse(conn, response)
+	}
+	return nil
 }
 
 type EchoCommand struct{}
@@ -24,7 +29,10 @@ func (c *EchoCommand) Execute(conn net.Conn, args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("ERR wrong number of arguments for 'echo' command")
 	}
-	return communicate.SendResponse(conn, communicate.EncodeSimpleString(args[0]))
+	if conn != nil {
+		return communicate.SendResponse(conn, communicate.EncodeBulkString(args[0]))
+	}
+	return nil
 }
 
 type SetCommand struct {
@@ -50,8 +58,12 @@ func (c *SetCommand) Execute(conn net.Conn, args []string) error {
 	}
 
 	c.rdb.Set(key, value, expiry)
+	fmt.Printf("==========SET %s %s\n", key, value)
 
-	return communicate.SendResponse(conn, communicate.EncodeSimpleString("OK"))
+	if conn != nil {
+		return communicate.SendResponse(conn, "+OK\r\n")
+	}
+	return nil
 }
 
 type GetCommand struct {
@@ -66,10 +78,16 @@ func (c *GetCommand) Execute(conn net.Conn, args []string) error {
 	key := args[0]
 	value, ok := c.rdb.Get(key)
 	if !ok {
-		return communicate.SendResponse(conn, "$-1\r\n")
+		if conn != nil {
+			return communicate.SendResponse(conn, "$-1\r\n")
+		}
+		return nil
 	}
 
-	return communicate.SendResponse(conn, communicate.EncodeSimpleString(value))
+	if conn != nil {
+		return communicate.SendResponse(conn, communicate.EncodeBulkString(value))
+	}
+	return nil
 }
 
 type ConfigCommand struct {
@@ -179,17 +197,16 @@ func (c *ReplconfCommand) Execute(conn net.Conn, args []string) error {
 	}
 
 	subcommand := strings.ToLower(args[0])
-	fmt.Println("====Received REPLCONF command", subcommand)
 	switch subcommand {
 	case "getack":
-		// This is a command from the master, we need to respond
-		offset := 0 // Hardcoded to 0 for now
-		response := fmt.Sprintf("*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n%d\r\n", offset)
+		// Get the current offset from the server
+		offset := c.server.GetMasterReplOffset()
+		response := fmt.Sprintf("*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$%d\r\n%d\r\n", len(strconv.FormatInt(offset, 10)), offset)
 		_, err := conn.Write([]byte(response))
 		return err
 
 	default:
 		fmt.Printf("unknown REPLCONF subcommand '%s'", subcommand)
-		return communicate.SendResponse(conn, communicate.EncodeSimpleString("OK"))
+		return communicate.SendResponse(conn, "+OK\r\n")
 	}
 }

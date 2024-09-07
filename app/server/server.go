@@ -28,9 +28,16 @@ type Server struct {
 	masterReplOffset int64
 	masterConn       net.Conn
 	handler          *handler.Handler
-	replicas         []net.Conn
+	replicas         []Replica
 	replicasMu       sync.RWMutex
 	isReplica        bool
+	offset           int64
+	lastBytesLen     int
+}
+
+type Replica struct {
+	conn   net.Conn
+	offset int
 }
 
 func New(addr string, port int, dir, dbfilename string, replicaof string) (*Server, error) {
@@ -48,6 +55,7 @@ func New(addr string, port int, dir, dbfilename string, replicaof string) (*Serv
 		role:             "master",
 		masterReplID:     "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
 		masterReplOffset: 0,
+		offset:           0,
 		isReplica:        replicaof != "",
 	}
 
@@ -83,7 +91,13 @@ func (s *Server) GetMasterReplID() string {
 }
 
 func (s *Server) GetMasterReplOffset() int64 {
-	return s.masterReplOffset
+	return s.offset
+}
+
+func (s *Server) UpdateMasterReplOffset() error {
+	s.offset += int64(s.lastBytesLen)
+
+	return nil
 }
 
 func (s *Server) IsReplica() bool {
@@ -121,7 +135,7 @@ func (s *Server) SendEmptyRDBFile(conn net.Conn) error {
 func (s *Server) AddReplica(conn net.Conn) {
 	s.replicasMu.Lock()
 	defer s.replicasMu.Unlock()
-	s.replicas = append(s.replicas, conn)
+	s.replicas = append(s.replicas, Replica{conn: conn, offset: 0})
 	fmt.Printf("Added new replica: %s\n", conn.RemoteAddr())
 }
 
@@ -129,7 +143,7 @@ func (s *Server) RemoveReplica(conn net.Conn) {
 	s.replicasMu.Lock()
 	defer s.replicasMu.Unlock()
 	for i, replica := range s.replicas {
-		if replica == conn {
+		if replica.conn == conn {
 			s.replicas = append(s.replicas[:i], s.replicas[i+1:]...)
 			fmt.Printf("Removed replica: %s\n", conn.RemoteAddr())
 			break
@@ -142,12 +156,12 @@ func (s *Server) PropagateCommand(args []string) {
 	s.replicasMu.RLock()
 	defer s.replicasMu.RUnlock()
 	for _, replica := range s.replicas {
-		_, err := replica.Write([]byte(command))
+		_, err := replica.conn.Write([]byte(command))
 		if err != nil {
-			fmt.Printf("Error propagating command to replica %s: %v\n", replica.RemoteAddr(), err)
-			s.RemoveReplica(replica)
+			fmt.Printf("Error propagating command to replica %s: %v\n", replica.conn.RemoteAddr(), err)
+			s.RemoveReplica(replica.conn)
 		} else {
-			fmt.Printf("Propagated command to replica %s: %s", replica.RemoteAddr(), command)
+			fmt.Printf("Propagated command to replica %s: %s", replica.conn.RemoteAddr(), command)
 		}
 	}
 }
@@ -171,34 +185,21 @@ func (s *Server) Listen() error {
 	s.listener = l
 
 	fmt.Printf("Server listening on %s\n", addr)
-
-	if s.role == "slave" {
-		go s.connectToMaster()
+	if s.GetRole() == "slave" {
+		go s.ConnectToMaster()
 	}
-
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			fmt.Printf("Error accepting connection: %v\n", err)
 			continue
 		}
-		s.masterConn = conn
 		go s.handleConnection(conn)
 	}
 }
 
 func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
-	fmt.Printf("New connection from %s\n", conn.RemoteAddr())
-
-	if s.role == "master" {
-		s.handleMasterConnection(conn)
-	} else {
-		s.handleSlaveConnection(conn)
-	}
-}
-
-func (s *Server) handleMasterConnection(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 
 	for {
@@ -215,46 +216,49 @@ func (s *Server) handleMasterConnection(conn net.Conn) {
 			reader.UnreadByte()
 		}
 
-		commandArgs, err := parser.ParseArray(reader)
+		commandArgs, _, err := parser.ParseArray(reader)
 		if err != nil {
 			fmt.Println("error parsing array:", err)
 			return
 		}
 
-		// Handle regular client command
+		fmt.Printf("Received command: %v - %v\n", commandArgs, s.role)
+
 		if err := s.handler.Handle(conn, commandArgs); err != nil {
 			fmt.Printf("Error handling command: %v\n", err)
-			return
 		}
 	}
 }
 
-func (s *Server) handleSlaveConnection(conn net.Conn) {
-	reader := bufio.NewReader(conn)
+func (s *Server) handleReplicaConnection(reader *bufio.Reader, conn net.Conn) {
 
-	for {
-		commandType, err := reader.ReadByte()
-		if err == io.EOF {
-			return
-		}
-		if err != nil {
-			fmt.Println("error reading command type:", err)
-			return
-		}
-
-		if commandType != '*' {
-			reader.UnreadByte()
-		}
-
-		commandArgs, err := parser.ParseArray(reader)
-		if err != nil {
-			fmt.Println("error parsing array:", err)
-			return
-		}
-
-		// Process command from master without sending a response
-		if err := s.handler.HandleReplicaCommand(conn, commandArgs); err != nil {
-			fmt.Printf("Error handling replica command: %v\n", err)
-		}
+	commandType, err := reader.ReadByte()
+	if err == io.EOF {
+		return
 	}
+	if err != nil {
+		fmt.Println("error reading command type:", err)
+		return
+	}
+
+	if commandType != '*' {
+		reader.UnreadByte()
+	}
+
+	commandArgs, cmdSize, err := parser.ParseArray(reader)
+	if err != nil {
+		fmt.Println("error parsing array:", err)
+		return
+	}
+
+	fmt.Printf("Received command: %v - %v\n", commandArgs, s.role)
+
+	s.lastBytesLen = cmdSize
+
+	// Process command from master without sending a response
+	if err := s.handler.HandleReplicaCommand(conn, commandArgs); err != nil {
+		fmt.Printf("Error handling replica command: %v\n", err)
+	}
+
+	s.UpdateMasterReplOffset()
 }
