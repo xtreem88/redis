@@ -151,6 +151,12 @@ func (s *Server) RemoveReplica(conn net.Conn) {
 	}
 }
 
+func (s *Server) ReplicaCount() int {
+	s.replicasMu.RLock()
+	defer s.replicasMu.RUnlock()
+	return len(s.replicas)
+}
+
 func (s *Server) PropagateCommand(args []string) {
 	command := encodeRESPArray(args)
 	s.replicasMu.RLock()

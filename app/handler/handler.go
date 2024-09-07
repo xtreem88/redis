@@ -22,6 +22,7 @@ type ServerInfo interface {
 	RemoveReplica(conn net.Conn)
 	GetMasterConn() net.Conn
 	SendCommand(conn net.Conn, args ...string) error
+	ReplicaCount() int
 }
 
 type Command interface {
@@ -120,7 +121,7 @@ func (h *Handler) getCommand(name string) Command {
 	case "INFO":
 		return &InfoCommand{server: h.server}
 	case "WAIT":
-		return &WaitCommand{}
+		return &WaitCommand{server: h.server}
 	default:
 		return nil
 	}

@@ -211,10 +211,43 @@ func (c *ReplconfCommand) Execute(conn net.Conn, args []string) error {
 	}
 }
 
-type WaitCommand struct{}
+type WaitCommand struct {
+	server ServerInfo
+}
 
 func (c *WaitCommand) Execute(conn net.Conn, args []string) error {
-	response := ":0\r\n"
-	_, err := conn.Write([]byte(response))
+	if len(args) != 2 {
+		return fmt.Errorf("ERR wrong number of arguments for 'WAIT' command")
+	}
+
+	numReplicas, err := strconv.Atoi(args[0])
+	if err != nil {
+		return fmt.Errorf("ERR invalid number of replicas")
+	}
+
+	timeout, err := strconv.Atoi(args[1])
+	if err != nil {
+		return fmt.Errorf("ERR invalid timeout")
+	}
+
+	replicaCount := c.server.ReplicaCount()
+	if replicaCount >= numReplicas {
+		response := fmt.Sprintf(":%d\r\n", replicaCount)
+		_, err = conn.Write([]byte(response))
+		return err
+	}
+
+	// Wait for more replicas or timeout
+	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
+	for time.Now().Before(deadline) {
+		replicaCount = c.server.ReplicaCount()
+		if replicaCount >= numReplicas {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	response := fmt.Sprintf(":%d\r\n", replicaCount)
+	_, err = conn.Write([]byte(response))
 	return err
 }
