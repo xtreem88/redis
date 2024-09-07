@@ -119,6 +119,8 @@ func (h *Handler) getCommand(name string) Command {
 		return &KeysCommand{rdb: h.rdb}
 	case "INFO":
 		return &InfoCommand{server: h.server}
+	case "WAIT":
+		return &WaitCommand{}
 	default:
 		return nil
 	}

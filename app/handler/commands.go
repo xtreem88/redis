@@ -210,3 +210,11 @@ func (c *ReplconfCommand) Execute(conn net.Conn, args []string) error {
 		return communicate.SendResponse(conn, "+OK\r\n")
 	}
 }
+
+type WaitCommand struct{}
+
+func (c *WaitCommand) Execute(conn net.Conn, args []string) error {
+	response := ":0\r\n"
+	_, err := conn.Write([]byte(response))
+	return err
+}
