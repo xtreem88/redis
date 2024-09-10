@@ -14,9 +14,18 @@ import (
 type RDB struct {
 	version string
 	index   byte
-	data    map[string]string
+	data    map[string]interface{}
 	expires map[string]time.Time
 	mu      sync.RWMutex
+}
+
+type StreamEntry struct {
+	ID     string
+	Fields map[string]string
+}
+
+type Stream struct {
+	Entries []StreamEntry
 }
 
 func LoadRDB(dir, filename string) (*RDB, error) {
@@ -24,14 +33,14 @@ func LoadRDB(dir, filename string) (*RDB, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &RDB{data: make(map[string]string), expires: make(map[string]time.Time)}, nil
+			return &RDB{data: make(map[string]interface{}), expires: make(map[string]time.Time)}, nil
 		}
 		return nil, err
 	}
 	defer file.Close()
 
 	rdb := &RDB{
-		data:    make(map[string]string),
+		data:    make(map[string]interface{}),
 		expires: make(map[string]time.Time),
 	}
 	if err := rdb.parse(file); err != nil {
@@ -40,16 +49,42 @@ func LoadRDB(dir, filename string) (*RDB, error) {
 	return rdb, nil
 }
 
+func (rdb *RDB) XAdd(key string, id string, fields map[string]string) string {
+	rdb.mu.Lock()
+	defer rdb.mu.Unlock()
+
+	stream, ok := rdb.data[key].(*Stream)
+	if !ok {
+		stream = &Stream{}
+		rdb.data[key] = stream
+	}
+
+	entry := StreamEntry{
+		ID:     id,
+		Fields: fields,
+	}
+
+	stream.Entries = append(stream.Entries, entry)
+	return id
+}
+
 func (rdb *RDB) GetType(key string) string {
 	rdb.mu.RLock()
 	defer rdb.mu.RUnlock()
 
-	_, exists := rdb.data[key]
+	value, exists := rdb.data[key]
 	if !exists {
 		return "none"
 	}
 
-	return "string"
+	switch value.(type) {
+	case string:
+		return "string"
+	case *Stream:
+		return "stream"
+	default:
+		return "none"
+	}
 }
 
 func (rdb *RDB) parse(f *os.File) error {
@@ -221,7 +256,7 @@ func readUint64(r *bufio.Reader) (uint64, error) {
 	return binary.LittleEndian.Uint64(buf), nil
 }
 
-func (rdb *RDB) Get(key string) (string, bool) {
+func (rdb *RDB) Get(key string) (interface{}, bool) {
 	rdb.mu.RLock()
 	defer rdb.mu.RUnlock()
 	value, ok := rdb.data[key]

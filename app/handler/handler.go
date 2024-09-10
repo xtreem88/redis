@@ -128,6 +128,8 @@ func (h *Handler) getCommand(name string) Command {
 		return &WaitCommand{server: h.server}
 	case "TYPE":
 		return &TypeCommand{rdb: h.rdb}
+	case "XADD":
+		return &XaddCommand{rdb: h.rdb}
 	default:
 		return nil
 	}

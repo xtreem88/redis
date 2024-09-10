@@ -97,7 +97,14 @@ func (c *GetCommand) Execute(conn net.Conn, args []string) error {
 	}
 
 	if conn != nil {
-		return communicate.SendResponse(conn, communicate.EncodeBulkString(value))
+		switch v := value.(type) {
+		case string:
+			return communicate.SendResponse(conn, communicate.EncodeBulkString(v))
+		case *persistence.Stream:
+			return fmt.Errorf("ERR GET command cannot be used with stream values")
+		default:
+			return communicate.SendResponse(conn, communicate.EncodeBulkString(fmt.Sprintf("%v", v)))
+		}
 	}
 	return nil
 }
@@ -209,7 +216,6 @@ func (c *ReplconfCommand) Execute(conn net.Conn, args []string) error {
 	}
 
 	subcommand := strings.ToLower(args[0])
-	fmt.Println("=============Subcommand", subcommand)
 	switch subcommand {
 	case "getack":
 		offset := c.server.GetMasterReplOffset()
@@ -230,7 +236,6 @@ func (c *ReplconfCommand) Execute(conn net.Conn, args []string) error {
 		numAcksSinceLasSet++
 		ackLock.Unlock()
 
-		fmt.Println("=========================ack", numAcksSinceLasSet)
 		return nil
 	default:
 		fmt.Printf("Unknown REPLCONF subcommand: %s\n", subcommand)
@@ -320,5 +325,28 @@ func (c *TypeCommand) Execute(conn net.Conn, args []string) error {
 	valueType := c.rdb.GetType(key)
 
 	response := fmt.Sprintf("+%s\r\n", valueType)
+	return communicate.SendResponse(conn, response)
+}
+
+type XaddCommand struct {
+	rdb *persistence.RDB
+}
+
+func (c *XaddCommand) Execute(conn net.Conn, args []string) error {
+	if len(args) < 3 || len(args)%2 != 0 {
+		return fmt.Errorf("ERR wrong number of arguments for 'xadd' command")
+	}
+
+	key := args[0]
+	id := args[1]
+	fields := make(map[string]string)
+
+	for i := 2; i < len(args); i += 2 {
+		fields[args[i]] = args[i+1]
+	}
+
+	resultID := c.rdb.XAdd(key, id, fields)
+
+	response := fmt.Sprintf("$%d\r\n%s\r\n", len(resultID), resultID)
 	return communicate.SendResponse(conn, response)
 }
