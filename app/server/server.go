@@ -8,7 +8,6 @@ import (
 	"net"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/config"
 	"github.com/codecrafters-io/redis-starter-go/app/handler"
@@ -158,85 +157,6 @@ func (s *Server) GetOffset() int64 {
 	s.offsetMu.RLock()
 	defer s.offsetMu.RUnlock()
 	return s.offset
-}
-
-func (s *Server) WaitForAcks(numReplicas int, timeout time.Duration) int {
-	fmt.Printf("WaitForAcks called with numReplicas: %d, timeout: %v\n", numReplicas, timeout)
-	deadline := time.Now().Add(timeout)
-	currentOffset := s.GetOffset()
-	fmt.Printf("Current offset: %d\n", currentOffset)
-
-	s.SendGetAckToReplicas()
-	fmt.Println("=============ackkk", s.ack)
-
-	ackCount := 0
-	for time.Now().Before(deadline) {
-		ackCount = 0
-		s.replicasMu.RLock()
-		for _, replica := range s.replicas {
-			// fmt.Printf("Replica %v offset: %d currentOffset: %d\n", conn.RemoteAddr().String(), replica.Offset, currentOffset)
-			if replica.Offset >= currentOffset {
-				ackCount++
-			}
-		}
-		s.replicasMu.RUnlock()
-
-		fmt.Printf("Current ackCount: %d\n", ackCount)
-
-		if ackCount >= numReplicas || ackCount == len(s.replicas) {
-			fmt.Println("==========", s.ack)
-			fmt.Printf("Reached required acks. Returning %d\n", s.ack)
-			return int(currentOffset)
-		}
-
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	return int(currentOffset)
-}
-
-func (s *Server) SendGetAckToReplicas() {
-	getAckCmd := []byte("*3\r\n$8\r\nREPLCONF\r\n$6\r\nGETACK\r\n$1\r\n*\r\n")
-
-	s.replicasMu.RLock()
-	for conn, replica := range s.replicas {
-		if replica.Offset > 0 {
-			_, err := conn.Write(getAckCmd)
-			if err != nil {
-				fmt.Printf("Error sending GETACK to replica %v: %v\n", conn.RemoteAddr(), err)
-				continue
-			}
-
-			go func(conn net.Conn) {
-				buffer := make([]byte, 1024)
-				n, err := conn.Read(buffer)
-				if err == nil {
-					response := string(buffer[:n])
-					if strings.HasPrefix(response, "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n") {
-						s.replicasMu.Lock()
-						s.ack++
-						s.replicasMu.Unlock()
-					}
-				} else {
-					fmt.Printf("Error reading from replica %v: %v\n", conn.RemoteAddr(), err)
-				}
-			}(conn)
-		}
-	}
-	s.replicasMu.RUnlock()
-}
-
-func (s *Server) AcknowledgeOffset(conn net.Conn, offset int64) {
-	s.replicasMu.Lock()
-	defer s.replicasMu.Unlock()
-	s.ack++
-	if replica, ok := s.replicas[conn]; ok {
-		fmt.Printf("Updating replica %v offset from %d to %d\n", conn.RemoteAddr(), replica.Offset, offset)
-		replica.Offset = offset
-	} else {
-		fmt.Printf("Replica %v not found in replicas map\n", conn.RemoteAddr())
-	}
-	fmt.Println("=============ack", s.ack)
 }
 
 func (s *Server) PropagateCommand(args []string) {

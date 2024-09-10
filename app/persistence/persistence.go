@@ -40,6 +40,18 @@ func LoadRDB(dir, filename string) (*RDB, error) {
 	return rdb, nil
 }
 
+func (rdb *RDB) GetType(key string) string {
+	rdb.mu.RLock()
+	defer rdb.mu.RUnlock()
+
+	_, exists := rdb.data[key]
+	if !exists {
+		return "none"
+	}
+
+	return "string"
+}
+
 func (rdb *RDB) parse(f *os.File) error {
 	reader := bufio.NewReader(f)
 

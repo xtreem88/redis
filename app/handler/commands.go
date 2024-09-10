@@ -306,3 +306,19 @@ func (c *WaitCommand) Execute(conn net.Conn, args []string) error {
 		}
 	}
 }
+
+type TypeCommand struct {
+	rdb *persistence.RDB
+}
+
+func (c *TypeCommand) Execute(conn net.Conn, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("ERR wrong number of arguments for 'type' command")
+	}
+
+	key := args[0]
+	valueType := c.rdb.GetType(key)
+
+	response := fmt.Sprintf("+%s\r\n", valueType)
+	return communicate.SendResponse(conn, response)
+}

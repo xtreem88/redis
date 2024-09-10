@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/config"
 	"github.com/codecrafters-io/redis-starter-go/app/persistence"
@@ -27,9 +26,7 @@ type ServerInfo interface {
 	RemoveReplica(conn net.Conn)
 	GetMasterConn() net.Conn
 	SendCommand(conn net.Conn, args ...string) error
-	WaitForAcks(numReplicas int, timeout time.Duration) int
 	GetReplicas() map[net.Conn]*Replica
-	AcknowledgeOffset(conn net.Conn, offset int64)
 }
 
 type Command interface {
@@ -129,6 +126,8 @@ func (h *Handler) getCommand(name string) Command {
 		return &InfoCommand{server: h.server}
 	case "WAIT":
 		return &WaitCommand{server: h.server}
+	case "TYPE":
+		return &TypeCommand{rdb: h.rdb}
 	default:
 		return nil
 	}
