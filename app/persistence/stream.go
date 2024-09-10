@@ -19,6 +19,11 @@ type Stream struct {
 	Entries []StreamEntry
 }
 
+type StreamResult struct {
+	Key     string
+	Entries []StreamEntry
+}
+
 const InvalidStreamError = "The ID specified in XADD is equal or smaller than the target stream top item"
 
 func (rdb *RDB) XAdd(key string, milliseconds, sequence int64, fields map[string]string) (string, error) {
@@ -97,6 +102,27 @@ func (rdb *RDB) XRange(key, start, end string) ([]StreamEntry, error) {
 
 		if (entry.Milliseconds >= startTime && entry.Sequence >= startSeq) &&
 			(entry.Milliseconds <= endTime && entry.Sequence <= endSeq) {
+			result = append(result, entry)
+		}
+	}
+
+	return result, nil
+}
+
+func (rdb *RDB) XRead(key, id string) ([]StreamEntry, error) {
+	rdb.mu.RLock()
+	defer rdb.mu.RUnlock()
+
+	stream, ok := rdb.data[key].(*Stream)
+	if !ok {
+		return nil, fmt.Errorf("key does not exist")
+	}
+
+	startTime, startSeq := parseID(id)
+
+	var result []StreamEntry
+	for _, entry := range stream.Entries {
+		if entry.Milliseconds > startTime || (entry.Milliseconds == startTime && entry.Sequence > startSeq) {
 			result = append(result, entry)
 		}
 	}

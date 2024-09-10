@@ -430,3 +430,63 @@ func encodeXRangeResponse(entries []persistence.StreamEntry) string {
 
 	return builder.String()
 }
+
+type XReadCommand struct {
+	rdb *persistence.RDB
+}
+
+func (c *XReadCommand) Execute(conn net.Conn, args []string) error {
+	if len(args) < 3 {
+		return communicate.SendResponse(conn, "-ERR wrong number of arguments for 'xread' command\r\n")
+	}
+
+	streamCount := (len(args) - 1) / 2
+	streams := args[1 : 1+streamCount]
+	ids := args[1+streamCount:]
+
+	if len(streams) != len(ids) {
+		return communicate.SendResponse(conn, "-ERR Unbalanced XREAD list of streams: for each stream key an ID must be specified.\r\n")
+	}
+
+	results := make([]persistence.StreamResult, 0, len(streams))
+	for i, stream := range streams {
+		entries, err := c.rdb.XRead(stream, ids[i])
+		if err != nil {
+			return communicate.SendResponse(conn, fmt.Sprintf("-ERR %s\r\n", err.Error()))
+		}
+		if len(entries) > 0 {
+			results = append(results, persistence.StreamResult{
+				Key:     stream,
+				Entries: entries,
+			})
+		}
+	}
+
+	response := encodeXReadResponse(results)
+	return communicate.SendResponse(conn, response)
+}
+
+func encodeXReadResponse(results []persistence.StreamResult) string {
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("*%d\r\n", len(results)))
+
+	for _, result := range results {
+		builder.WriteString("*2\r\n")
+		builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(result.Key), result.Key))
+		builder.WriteString(fmt.Sprintf("*%d\r\n", len(result.Entries)))
+
+		for _, entry := range result.Entries {
+			builder.WriteString("*2\r\n")
+			id := fmt.Sprintf("%d-%d", entry.Milliseconds, entry.Sequence)
+			builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(id), id))
+
+			builder.WriteString(fmt.Sprintf("*%d\r\n", len(entry.Fields)*2))
+			for k, v := range entry.Fields {
+				builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(k), k))
+				builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(v), v))
+			}
+		}
+	}
+
+	return builder.String()
+}

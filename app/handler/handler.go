@@ -132,6 +132,8 @@ func (h *Handler) getCommand(name string) Command {
 		return &XaddCommand{rdb: h.rdb}
 	case "XRANGE":
 		return &XRangeCommand{rdb: h.rdb}
+	case "XREAD":
+		return &XReadCommand{rdb: h.rdb}
 	default:
 		return nil
 	}
