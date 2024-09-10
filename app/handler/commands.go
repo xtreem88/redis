@@ -386,3 +386,47 @@ func (c *XaddCommand) Execute(conn net.Conn, args []string) error {
 	response := fmt.Sprintf("$%d\r\n%s\r\n", len(resultID), resultID)
 	return communicate.SendResponse(conn, response)
 }
+
+type XRangeCommand struct {
+	rdb *persistence.RDB
+}
+
+func (c *XRangeCommand) Execute(conn net.Conn, args []string) error {
+	if len(args) != 3 {
+		return communicate.SendResponse(conn, "-ERR wrong number of arguments for 'xrange' command\r\n")
+	}
+
+	key := args[0]
+	start := args[1]
+	end := args[2]
+
+	entries, err := c.rdb.XRange(key, start, end)
+	if err != nil {
+		return communicate.SendResponse(conn, fmt.Sprintf("-ERR %s\r\n", err.Error()))
+	}
+
+	response := encodeXRangeResponse(entries)
+	return communicate.SendResponse(conn, response)
+}
+
+func encodeXRangeResponse(entries []persistence.StreamEntry) string {
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("*%d\r\n", len(entries)))
+
+	for _, entry := range entries {
+		builder.WriteString("*2\r\n")
+
+		// Encode ID
+		id := fmt.Sprintf("%d-%d", entry.Milliseconds, entry.Sequence)
+		builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(id), id))
+
+		// Encode fields
+		builder.WriteString(fmt.Sprintf("*%d\r\n", len(entry.Fields)*2))
+		for k, v := range entry.Fields {
+			builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(k), k))
+			builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(v), v))
+		}
+	}
+
+	return builder.String()
+}

@@ -3,6 +3,8 @@ package persistence
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -70,4 +72,38 @@ func (rdb *RDB) XAdd(key string, milliseconds, sequence int64, fields map[string
 
 	stream.Entries = append(stream.Entries, entry)
 	return fmt.Sprintf("%d-%d", milliseconds, sequence), nil
+}
+
+func (rdb *RDB) XRange(key, start, end string) ([]StreamEntry, error) {
+	rdb.mu.RLock()
+	defer rdb.mu.RUnlock()
+
+	stream, ok := rdb.data[key].(*Stream)
+	if !ok {
+		return nil, fmt.Errorf("key does not exist")
+	}
+
+	startTime, startSeq := parseID(start)
+	endTime, endSeq := parseID(end)
+
+	var result []StreamEntry
+	for _, entry := range stream.Entries {
+
+		if (entry.Milliseconds >= startTime && entry.Sequence >= startSeq) &&
+			(entry.Milliseconds <= endTime && entry.Sequence <= endSeq) {
+			result = append(result, entry)
+		}
+	}
+
+	return result, nil
+}
+
+func parseID(id string) (int64, int64) {
+	parts := strings.Split(id, "-")
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	time, _ := strconv.ParseInt(parts[0], 10, 64)
+	seq, _ := strconv.ParseInt(parts[1], 10, 64)
+	return time, seq
 }
