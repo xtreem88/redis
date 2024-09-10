@@ -114,7 +114,9 @@ func (rdb *RDB) XRange(key, start, end string) ([]StreamEntry, error) {
 
 func (rdb *RDB) XRead(keys []string, ids []string, block *time.Duration) ([]StreamResult, error) {
 	var endTime time.Time
-	if block != nil {
+	indefiniteBlock := block != nil && *block == 0
+
+	if block != nil && !indefiniteBlock {
 		endTime = time.Now().Add(*block)
 	}
 
@@ -150,7 +152,7 @@ func (rdb *RDB) XRead(keys []string, ids []string, block *time.Duration) ([]Stre
 			return nil, nil
 		}
 
-		if time.Now().After(endTime) {
+		if !indefiniteBlock && time.Now().After(endTime) {
 			rdb.mu.RUnlock()
 			return nil, nil
 		}
@@ -158,10 +160,14 @@ func (rdb *RDB) XRead(keys []string, ids []string, block *time.Duration) ([]Stre
 		rdb.mu.RUnlock()
 
 		// Wait for a short duration before checking again
-		select {
-		case <-time.After(10 * time.Millisecond):
-		case <-time.After(time.Until(endTime)):
-			return nil, nil
+		if indefiniteBlock {
+			time.Sleep(10 * time.Millisecond)
+		} else {
+			select {
+			case <-time.After(10 * time.Millisecond):
+			case <-time.After(time.Until(endTime)):
+				return nil, nil
+			}
 		}
 	}
 }
