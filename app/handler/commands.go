@@ -351,9 +351,14 @@ func (c *XaddCommand) Execute(conn net.Conn, args []string) error {
 		return communicate.SendResponse(conn, "-ERR Invalid stream ID format\r\n")
 	}
 
-	sequence, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil {
-		return communicate.SendResponse(conn, "-ERR Invalid stream ID format\r\n")
+	var sequence int64
+	if parts[1] == "*" {
+		sequence = -1 // Use -1 to indicate auto-generation
+	} else {
+		sequence, err = strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			return communicate.SendResponse(conn, "-ERR Invalid stream ID format\r\n")
+		}
 	}
 
 	// Check if ID is greater than 0-0

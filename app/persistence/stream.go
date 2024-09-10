@@ -27,11 +27,33 @@ func (rdb *RDB) XAdd(key string, milliseconds, sequence int64, fields map[string
 		rdb.data[key] = stream
 	}
 
-	if len(stream.Entries) > 0 {
-		lastEntry := stream.Entries[len(stream.Entries)-1]
-		if milliseconds < lastEntry.Milliseconds ||
-			(milliseconds == lastEntry.Milliseconds && sequence <= lastEntry.Sequence) {
-			return "", errors.New(InvalidStreamError)
+	if sequence == -1 {
+		// Auto-generate sequence number
+		if len(stream.Entries) > 0 {
+			lastEntry := stream.Entries[len(stream.Entries)-1]
+			if milliseconds == lastEntry.Milliseconds {
+				sequence = lastEntry.Sequence + 1
+			} else if milliseconds > lastEntry.Milliseconds {
+				sequence = 0
+			} else {
+				return "", errors.New(InvalidStreamError)
+			}
+		} else {
+			// If the stream is empty
+			if milliseconds == 0 {
+				sequence = 1
+			} else {
+				sequence = 0
+			}
+		}
+	} else {
+		// Explicit sequence number
+		if len(stream.Entries) > 0 {
+			lastEntry := stream.Entries[len(stream.Entries)-1]
+			if milliseconds < lastEntry.Milliseconds ||
+				(milliseconds == lastEntry.Milliseconds && sequence <= lastEntry.Sequence) {
+				return "", errors.New(InvalidStreamError)
+			}
 		}
 	}
 
