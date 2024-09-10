@@ -19,15 +19,6 @@ type RDB struct {
 	mu      sync.RWMutex
 }
 
-type StreamEntry struct {
-	ID     string
-	Fields map[string]string
-}
-
-type Stream struct {
-	Entries []StreamEntry
-}
-
 func LoadRDB(dir, filename string) (*RDB, error) {
 	path := filepath.Join(dir, filename)
 	file, err := os.Open(path)
@@ -47,25 +38,6 @@ func LoadRDB(dir, filename string) (*RDB, error) {
 		return nil, err
 	}
 	return rdb, nil
-}
-
-func (rdb *RDB) XAdd(key string, id string, fields map[string]string) string {
-	rdb.mu.Lock()
-	defer rdb.mu.Unlock()
-
-	stream, ok := rdb.data[key].(*Stream)
-	if !ok {
-		stream = &Stream{}
-		rdb.data[key] = stream
-	}
-
-	entry := StreamEntry{
-		ID:     id,
-		Fields: fields,
-	}
-
-	stream.Entries = append(stream.Entries, entry)
-	return id
 }
 
 func (rdb *RDB) GetType(key string) string {

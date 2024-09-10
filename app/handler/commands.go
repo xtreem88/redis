@@ -334,18 +334,42 @@ type XaddCommand struct {
 
 func (c *XaddCommand) Execute(conn net.Conn, args []string) error {
 	if len(args) < 3 || len(args)%2 != 0 {
-		return fmt.Errorf("ERR wrong number of arguments for 'xadd' command")
+		return communicate.SendResponse(conn, "-ERR wrong number of arguments for 'xadd' command\r\n")
 	}
 
 	key := args[0]
 	id := args[1]
-	fields := make(map[string]string)
 
+	// Validate ID format
+	parts := strings.Split(id, "-")
+	if len(parts) != 2 {
+		return communicate.SendResponse(conn, "-ERR Invalid stream ID format\r\n")
+	}
+
+	milliseconds, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return communicate.SendResponse(conn, "-ERR Invalid stream ID format\r\n")
+	}
+
+	sequence, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return communicate.SendResponse(conn, "-ERR Invalid stream ID format\r\n")
+	}
+
+	// Check if ID is greater than 0-0
+	if milliseconds == 0 && sequence == 0 {
+		return communicate.SendResponse(conn, "-ERR The ID specified in XADD must be greater than 0-0\r\n")
+	}
+
+	fields := make(map[string]string)
 	for i := 2; i < len(args); i += 2 {
 		fields[args[i]] = args[i+1]
 	}
 
-	resultID := c.rdb.XAdd(key, id, fields)
+	resultID, err := c.rdb.XAdd(key, milliseconds, sequence, fields)
+	if err != nil {
+		return communicate.SendResponse(conn, fmt.Sprintf("-ERR %s\r\n", err.Error()))
+	}
 
 	response := fmt.Sprintf("$%d\r\n%s\r\n", len(resultID), resultID)
 	return communicate.SendResponse(conn, response)
