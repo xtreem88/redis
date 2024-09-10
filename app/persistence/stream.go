@@ -3,6 +3,7 @@ package persistence
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -84,7 +85,12 @@ func (rdb *RDB) XRange(key, start, end string) ([]StreamEntry, error) {
 	}
 
 	startTime, startSeq := parseID(start)
-	endTime, endSeq := parseID(end)
+	var endTime, endSeq int64
+	if end == "+" {
+		endTime, endSeq = math.MaxInt64, math.MaxInt64
+	} else {
+		endTime, endSeq = parseID(end)
+	}
 
 	var result []StreamEntry
 	for _, entry := range stream.Entries {
