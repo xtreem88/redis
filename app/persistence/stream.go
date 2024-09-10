@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,6 +18,7 @@ type StreamEntry struct {
 
 type Stream struct {
 	Entries []StreamEntry
+	Cond    *sync.Cond
 }
 
 type StreamResult struct {
@@ -32,7 +34,7 @@ func (rdb *RDB) XAdd(key string, milliseconds, sequence int64, fields map[string
 
 	stream, ok := rdb.data[key].(*Stream)
 	if !ok {
-		stream = &Stream{}
+		stream = &Stream{Cond: sync.NewCond(&sync.Mutex{})}
 		rdb.data[key] = stream
 	}
 
@@ -77,6 +79,7 @@ func (rdb *RDB) XAdd(key string, milliseconds, sequence int64, fields map[string
 	}
 
 	stream.Entries = append(stream.Entries, entry)
+	stream.Cond.Broadcast()
 	return fmt.Sprintf("%d-%d", milliseconds, sequence), nil
 }
 
@@ -109,25 +112,68 @@ func (rdb *RDB) XRange(key, start, end string) ([]StreamEntry, error) {
 	return result, nil
 }
 
-func (rdb *RDB) XRead(key, id string) ([]StreamEntry, error) {
-	rdb.mu.RLock()
-	defer rdb.mu.RUnlock()
-
-	stream, ok := rdb.data[key].(*Stream)
-	if !ok {
-		return nil, fmt.Errorf("key does not exist")
+func (rdb *RDB) XRead(keys []string, ids []string, block *time.Duration) ([]StreamResult, error) {
+	var endTime time.Time
+	if block != nil {
+		endTime = time.Now().Add(*block)
 	}
 
-	startTime, startSeq := parseID(id)
+	for {
+		rdb.mu.RLock()
+		results := make([]StreamResult, 0, len(keys))
 
+		for i, key := range keys {
+			stream, ok := rdb.data[key].(*Stream)
+			if !ok {
+				stream = &Stream{Cond: sync.NewCond(&sync.Mutex{})}
+				rdb.data[key] = stream
+			}
+
+			startTime, startSeq := parseID(ids[i])
+			entries := getEntriesAfterID(stream.Entries, startTime, startSeq)
+
+			if len(entries) > 0 {
+				results = append(results, StreamResult{
+					Key:     key,
+					Entries: entries,
+				})
+			}
+		}
+
+		if len(results) > 0 {
+			rdb.mu.RUnlock()
+			return results, nil
+		}
+
+		if block == nil {
+			rdb.mu.RUnlock()
+			return nil, nil
+		}
+
+		if time.Now().After(endTime) {
+			rdb.mu.RUnlock()
+			return nil, nil
+		}
+
+		rdb.mu.RUnlock()
+
+		// Wait for a short duration before checking again
+		select {
+		case <-time.After(10 * time.Millisecond):
+		case <-time.After(time.Until(endTime)):
+			return nil, nil
+		}
+	}
+}
+
+func getEntriesAfterID(entries []StreamEntry, startTime, startSeq int64) []StreamEntry {
 	var result []StreamEntry
-	for _, entry := range stream.Entries {
+	for _, entry := range entries {
 		if entry.Milliseconds > startTime || (entry.Milliseconds == startTime && entry.Sequence > startSeq) {
 			result = append(result, entry)
 		}
 	}
-
-	return result, nil
+	return result
 }
 
 func parseID(id string) (int64, int64) {

@@ -344,8 +344,8 @@ func (c *XaddCommand) Execute(conn net.Conn, args []string) error {
 	var err error
 
 	if id == "*" {
-		milliseconds = time.Now().UnixNano() / int64(time.Millisecond)
-		sequence = -1 // Use -1 to indicate auto-generation of sequence number
+		milliseconds = -1
+		sequence = -1
 	} else {
 		// Validate ID format
 		parts := strings.Split(id, "-")
@@ -359,7 +359,7 @@ func (c *XaddCommand) Execute(conn net.Conn, args []string) error {
 		}
 
 		if parts[1] == "*" {
-			sequence = -1 // Use -1 to indicate auto-generation of sequence number
+			sequence = -1
 		} else {
 			sequence, err = strconv.ParseInt(parts[1], 10, 64)
 			if err != nil {
@@ -380,6 +380,9 @@ func (c *XaddCommand) Execute(conn net.Conn, args []string) error {
 
 	resultID, err := c.rdb.XAdd(key, milliseconds, sequence, fields)
 	if err != nil {
+		if err.Error() == persistence.InvalidStreamError {
+			return communicate.SendResponse(conn, "-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
+		}
 		return communicate.SendResponse(conn, fmt.Sprintf("-ERR %s\r\n", err.Error()))
 	}
 
@@ -436,30 +439,45 @@ type XReadCommand struct {
 }
 
 func (c *XReadCommand) Execute(conn net.Conn, args []string) error {
-	if len(args) < 3 {
+	var blockDuration *time.Duration
+	streamsIndex := -1
+
+	for i, arg := range args {
+		if strings.ToUpper(arg) == "BLOCK" {
+			if i+1 >= len(args) {
+				return communicate.SendResponse(conn, "-ERR BLOCK option requires a timeout\r\n")
+			}
+			ms, err := strconv.ParseInt(args[i+1], 10, 64)
+			if err != nil {
+				return communicate.SendResponse(conn, "-ERR BLOCK timeout is not an integer\r\n")
+			}
+			duration := time.Duration(ms) * time.Millisecond
+			blockDuration = &duration
+		} else if strings.ToUpper(arg) == "STREAMS" {
+			streamsIndex = i
+			break
+		}
+	}
+
+	if streamsIndex == -1 || streamsIndex+1 >= len(args) {
 		return communicate.SendResponse(conn, "-ERR wrong number of arguments for 'xread' command\r\n")
 	}
 
-	streamCount := (len(args) - 1) / 2
-	streams := args[1 : 1+streamCount]
-	ids := args[1+streamCount:]
+	streamCount := (len(args) - streamsIndex - 1) / 2
+	streams := args[streamsIndex+1 : streamsIndex+1+streamCount]
+	ids := args[streamsIndex+1+streamCount:]
 
 	if len(streams) != len(ids) {
 		return communicate.SendResponse(conn, "-ERR Unbalanced XREAD list of streams: for each stream key an ID must be specified.\r\n")
 	}
 
-	results := make([]persistence.StreamResult, 0, len(streams))
-	for i, stream := range streams {
-		entries, err := c.rdb.XRead(stream, ids[i])
-		if err != nil {
-			return communicate.SendResponse(conn, fmt.Sprintf("-ERR %s\r\n", err.Error()))
-		}
-		if len(entries) > 0 {
-			results = append(results, persistence.StreamResult{
-				Key:     stream,
-				Entries: entries,
-			})
-		}
+	results, err := c.rdb.XRead(streams, ids, blockDuration)
+	if err != nil {
+		return communicate.SendResponse(conn, fmt.Sprintf("-ERR %s\r\n", err.Error()))
+	}
+
+	if results == nil {
+		return communicate.SendResponse(conn, "$-1\r\n")
 	}
 
 	response := encodeXReadResponse(results)
