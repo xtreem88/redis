@@ -5,6 +5,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/communicate"
@@ -12,11 +13,17 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/persistence"
 )
 
+var numAcksSinceLasSet = 0
+var ackLock = sync.Mutex{}
+
+var replicasLock = sync.Mutex{}
+
+var setHasOccurred = false
+
 type PingCommand struct{}
 
 func (c *PingCommand) Execute(conn net.Conn, args []string) error {
 	response := "+PONG\r\n"
-	fmt.Println("==========Ping Response", response)
 	if conn != nil {
 		return communicate.SendResponse(conn, response)
 	}
@@ -48,6 +55,12 @@ func (c *SetCommand) Execute(conn net.Conn, args []string) error {
 	value := args[1]
 	var expiry *time.Time
 
+	setHasOccurred = true
+
+	ackLock.Lock()
+	numAcksSinceLasSet = 0
+	ackLock.Unlock()
+
 	if len(args) == 4 && strings.ToUpper(args[2]) == "PX" {
 		ms, err := strconv.ParseInt(args[3], 10, 64)
 		if err != nil {
@@ -58,7 +71,6 @@ func (c *SetCommand) Execute(conn net.Conn, args []string) error {
 	}
 
 	c.rdb.Set(key, value, expiry)
-	fmt.Printf("==========SET %s %s\n", key, value)
 
 	if conn != nil {
 		return communicate.SendResponse(conn, "+OK\r\n")
@@ -197,16 +209,31 @@ func (c *ReplconfCommand) Execute(conn net.Conn, args []string) error {
 	}
 
 	subcommand := strings.ToLower(args[0])
+	fmt.Println("=============Subcommand", subcommand)
 	switch subcommand {
 	case "getack":
-		// Get the current offset from the server
 		offset := c.server.GetMasterReplOffset()
 		response := fmt.Sprintf("*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$%d\r\n%d\r\n", len(strconv.FormatInt(offset, 10)), offset)
+		fmt.Printf("Sending ACK response to replica %v with offset %d\n", conn.RemoteAddr(), offset)
 		_, err := conn.Write([]byte(response))
 		return err
+	case "ack":
+		if len(args) != 2 {
+			return fmt.Errorf("ERR wrong number of arguments for 'replconf ack' command")
+		}
+		offset, err := strconv.ParseInt(args[1], 10, 64)
+		if err != nil {
+			return fmt.Errorf("ERR invalid offset for 'replconf ack' command")
+		}
+		fmt.Printf("Received ACK from replica %v with offset %d\n", conn.RemoteAddr(), offset)
+		ackLock.Lock()
+		numAcksSinceLasSet++
+		ackLock.Unlock()
 
+		fmt.Println("=========================ack", numAcksSinceLasSet)
+		return nil
 	default:
-		fmt.Printf("unknown REPLCONF subcommand '%s'", subcommand)
+		fmt.Printf("Unknown REPLCONF subcommand: %s\n", subcommand)
 		return communicate.SendResponse(conn, "+OK\r\n")
 	}
 }
@@ -216,38 +243,66 @@ type WaitCommand struct {
 }
 
 func (c *WaitCommand) Execute(conn net.Conn, args []string) error {
-	if len(args) != 2 {
-		return fmt.Errorf("ERR wrong number of arguments for 'WAIT' command")
+	if len(args) < 2 {
+		return fmt.Errorf("error performing wait: not enough args")
 	}
+	replicas := c.server.GetReplicas()
 
-	numReplicas, err := strconv.Atoi(args[0])
-	if err != nil {
-		return fmt.Errorf("ERR invalid number of replicas")
-	}
+	if !setHasOccurred {
+		fmt.Println("Set has not occurred, sending 0")
+		replicasLock.Lock()
+		defer replicasLock.Unlock()
 
-	timeout, err := strconv.Atoi(args[1])
-	if err != nil {
-		return fmt.Errorf("ERR invalid timeout")
-	}
+		numAcks := len(replicas)
 
-	replicaCount := c.server.ReplicaCount()
-	if replicaCount >= numReplicas {
-		response := fmt.Sprintf(":%d\r\n", replicaCount)
-		_, err = conn.Write([]byte(response))
-		return err
-	}
-
-	// Wait for more replicas or timeout
-	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
-	for time.Now().Before(deadline) {
-		replicaCount = c.server.ReplicaCount()
-		if replicaCount >= numReplicas {
-			break
+		response := fmt.Sprintf(":%d\r\n", numAcks)
+		if _, err := conn.Write([]byte(response)); err != nil {
+			return fmt.Errorf("error performing wait: %w", err)
 		}
-		time.Sleep(10 * time.Millisecond)
+
+		return nil
 	}
 
-	response := fmt.Sprintf(":%d\r\n", replicaCount)
-	_, err = conn.Write([]byte(response))
-	return err
+	replicasLock.Lock()
+	getAckCmd := []byte(communicate.EncodeStringArray([]string{"REPLCONF", "GETACK", "*"}))
+	for cn := range replicas {
+		if _, err := cn.Write(getAckCmd); err != nil {
+			fmt.Println("Failed to getack after relaying command to replica", err.Error())
+		}
+	}
+	replicasLock.Unlock()
+
+	requiredAcks, err := strconv.Atoi(args[0])
+	if err != nil {
+		return fmt.Errorf("error performing wait: %w", err)
+	}
+	timeoutMS, err := strconv.Atoi(args[1])
+	if err != nil {
+		return fmt.Errorf("error performing wait: %w", err)
+	}
+
+	timeout := time.Duration(timeoutMS) * time.Millisecond
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	timeoutChannel := time.After(timeout)
+	for {
+		select {
+		case <-ticker.C:
+			if numAcksSinceLasSet >= requiredAcks {
+				response := fmt.Sprintf(":%d\r\n", numAcksSinceLasSet)
+				if _, err := conn.Write([]byte(response)); err != nil {
+					return fmt.Errorf("error performing wait: %w", err)
+				}
+				return nil
+			}
+		case <-timeoutChannel:
+			response := fmt.Sprintf(":%d\r\n", numAcksSinceLasSet)
+			if _, err := conn.Write([]byte(response)); err != nil {
+				return fmt.Errorf("error performing wait: %w", err)
+			}
+			return nil
+		}
+	}
 }

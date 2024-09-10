@@ -4,11 +4,16 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/config"
 	"github.com/codecrafters-io/redis-starter-go/app/persistence"
 )
 
+type Replica struct {
+	Offset int64
+	AckCh  chan struct{}
+}
 type ServerInfo interface {
 	GetRole() string
 	GetMasterHost() string
@@ -22,7 +27,9 @@ type ServerInfo interface {
 	RemoveReplica(conn net.Conn)
 	GetMasterConn() net.Conn
 	SendCommand(conn net.Conn, args ...string) error
-	ReplicaCount() int
+	WaitForAcks(numReplicas int, timeout time.Duration) int
+	GetReplicas() map[net.Conn]*Replica
+	AcknowledgeOffset(conn net.Conn, offset int64)
 }
 
 type Command interface {
@@ -54,7 +61,7 @@ func (h *Handler) Handle(conn net.Conn, args []string) error {
 		return fmt.Errorf("ERR unknown command '%s'", cmdName)
 	}
 
-	fmt.Printf("Replica executing: %s %v\n", cmdName, args[1:])
+	fmt.Printf("Master executing: %s %v\n", cmdName, args[1:])
 
 	err := cmd.Execute(conn, args[1:])
 	if err == nil && h.server.GetRole() == "master" && h.IsWriteCommand(cmdName) {
