@@ -28,6 +28,8 @@ type StreamResult struct {
 
 const InvalidStreamError = "The ID specified in XADD is equal or smaller than the target stream top item"
 
+var lastStreamID string
+
 func (rdb *RDB) XAdd(key string, milliseconds, sequence int64, fields map[string]string) (string, error) {
 	rdb.mu.Lock()
 	defer rdb.mu.Unlock()
@@ -78,6 +80,8 @@ func (rdb *RDB) XAdd(key string, milliseconds, sequence int64, fields map[string
 		Fields:       fields,
 	}
 
+	lastStreamID = fmt.Sprintf("%v-%v", milliseconds, sequence)
+
 	stream.Entries = append(stream.Entries, entry)
 	stream.Cond.Broadcast()
 	return fmt.Sprintf("%d-%d", milliseconds, sequence), nil
@@ -120,6 +124,7 @@ func (rdb *RDB) XRead(keys []string, ids []string, block *time.Duration) ([]Stre
 		endTime = time.Now().Add(*block)
 	}
 
+	lastID := ""
 	for {
 		rdb.mu.RLock()
 		results := make([]StreamResult, 0, len(keys))
@@ -131,7 +136,15 @@ func (rdb *RDB) XRead(keys []string, ids []string, block *time.Duration) ([]Stre
 				rdb.data[key] = stream
 			}
 
-			startTime, startSeq := parseID(ids[i])
+			if ids[i] == "$" && lastID == "" {
+				lastID = lastStreamID
+			}
+
+			id := ids[i]
+			if lastID != "" {
+				id = lastID
+			}
+			startTime, startSeq := parseID(id)
 			entries := getEntriesAfterID(stream.Entries, startTime, startSeq)
 
 			if len(entries) > 0 {
