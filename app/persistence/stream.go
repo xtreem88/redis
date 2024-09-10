@@ -3,6 +3,7 @@ package persistence
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 type StreamEntry struct {
@@ -25,6 +26,10 @@ func (rdb *RDB) XAdd(key string, milliseconds, sequence int64, fields map[string
 	if !ok {
 		stream = &Stream{}
 		rdb.data[key] = stream
+	}
+
+	if milliseconds == -1 {
+		milliseconds = time.Now().UnixMilli()
 	}
 
 	if sequence == -1 {

@@ -340,24 +340,31 @@ func (c *XaddCommand) Execute(conn net.Conn, args []string) error {
 	key := args[0]
 	id := args[1]
 
-	// Validate ID format
-	parts := strings.Split(id, "-")
-	if len(parts) != 2 {
-		return communicate.SendResponse(conn, "-ERR Invalid stream ID format\r\n")
-	}
+	var milliseconds, sequence int64
+	var err error
 
-	milliseconds, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		return communicate.SendResponse(conn, "-ERR Invalid stream ID format\r\n")
-	}
-
-	var sequence int64
-	if parts[1] == "*" {
-		sequence = -1 // Use -1 to indicate auto-generation
+	if id == "*" {
+		milliseconds = time.Now().UnixNano() / int64(time.Millisecond)
+		sequence = -1 // Use -1 to indicate auto-generation of sequence number
 	} else {
-		sequence, err = strconv.ParseInt(parts[1], 10, 64)
+		// Validate ID format
+		parts := strings.Split(id, "-")
+		if len(parts) != 2 {
+			return communicate.SendResponse(conn, "-ERR Invalid stream ID format\r\n")
+		}
+
+		milliseconds, err = strconv.ParseInt(parts[0], 10, 64)
 		if err != nil {
 			return communicate.SendResponse(conn, "-ERR Invalid stream ID format\r\n")
+		}
+
+		if parts[1] == "*" {
+			sequence = -1 // Use -1 to indicate auto-generation of sequence number
+		} else {
+			sequence, err = strconv.ParseInt(parts[1], 10, 64)
+			if err != nil {
+				return communicate.SendResponse(conn, "-ERR Invalid stream ID format\r\n")
+			}
 		}
 	}
 
