@@ -136,6 +136,8 @@ func (h *Handler) getCommand(name string) Command {
 		return &XReadCommand{rdb: h.rdb}
 	case "INCR":
 		return &IncrCommand{rdb: h.rdb}
+	case "MULTI":
+		return &MultiCommand{}
 	default:
 		return nil
 	}

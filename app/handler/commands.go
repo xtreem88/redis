@@ -529,3 +529,14 @@ func (c *IncrCommand) Execute(conn net.Conn, args []string) error {
 
 	return communicate.SendResponse(conn, fmt.Sprintf(":%d\r\n", value))
 }
+
+type MultiCommand struct {
+}
+
+func (c *MultiCommand) Execute(conn net.Conn, args []string) error {
+	if len(args) != 0 {
+		return communicate.SendResponse(conn, "-ERR wrong number of arguments for 'multi' command\r\n")
+	}
+
+	return communicate.SendResponse(conn, "+OK\r\n")
+}
