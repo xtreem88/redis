@@ -91,6 +91,7 @@ func (c *GetCommand) Execute(conn net.Conn, args []string) error {
 	value, ok := c.rdb.Get(key)
 	if !ok {
 		if conn != nil {
+			fmt.Println("============")
 			return communicate.SendResponse(conn, "$-1\r\n")
 		}
 		return nil
@@ -539,8 +540,19 @@ func (c *MultiCommand) Execute(conn net.Conn, args []string) error {
 		return communicate.SendResponse(conn, "-ERR wrong number of arguments for 'multi' command\r\n")
 	}
 
-	c.handler.inTransaction = true
-	c.handler.queuedCommands = []QueuedCommand{}
+	c.handler.transactionMutex.Lock()
+	transaction, exists := c.handler.transactions[conn]
+	if !exists {
+		transaction = &Transaction{}
+		c.handler.transactions[conn] = transaction
+	}
+	c.handler.transactionMutex.Unlock()
+
+	if transaction.inTransaction {
+		return communicate.SendResponse(conn, "-ERR MULTI calls can not be nested\r\n")
+	}
+	transaction.inTransaction = true
+	transaction.queuedCommands = []QueuedCommand{}
 	return communicate.SendResponse(conn, "+OK\r\n")
 }
 
@@ -553,33 +565,17 @@ func (c *ExecCommand) Execute(conn net.Conn, args []string) error {
 		return communicate.SendResponse(conn, "-ERR wrong number of arguments for 'exec' command\r\n")
 	}
 
-	if !c.handler.inTransaction {
+	c.handler.transactionMutex.Lock()
+	transaction, exists := c.handler.transactions[conn]
+	if !exists {
+		transaction = &Transaction{}
+		c.handler.transactions[conn] = transaction
+	}
+	c.handler.transactionMutex.Unlock()
+
+	if !transaction.inTransaction {
 		return communicate.SendResponse(conn, "-ERR EXEC without MULTI\r\n")
 	}
-
-	defer c.handler.resetTransaction()
-
-	responses := make([]string, len(c.handler.queuedCommands))
-	for i, queuedCommand := range c.handler.queuedCommands {
-		command := c.handler.getCommand(queuedCommand.Name)
-		if command == nil {
-			responses[i] = fmt.Sprintf("-ERR unknown command '%s'\r\n", queuedCommand.Name)
-		} else {
-			// Execute the command and capture its response
-			responseWriter := &ResponseWriter{}
-			err := command.Execute(responseWriter, queuedCommand.Args)
-			if err != nil {
-				responses[i] = fmt.Sprintf("-ERR %s\r\n", err.Error())
-			} else {
-				responses[i] = responseWriter.String()
-			}
-		}
-	}
-
-	// Send the array of responses
-	response := fmt.Sprintf("*%d\r\n", len(responses))
-	for _, resp := range responses {
-		response += resp
-	}
-	return communicate.SendResponse(conn, response)
+	defer c.handler.resetTransaction(conn)
+	return c.handler.executeTransaction(conn)
 }

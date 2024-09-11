@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 
 	"github.com/codecrafters-io/redis-starter-go/app/communicate"
 	"github.com/codecrafters-io/redis-starter-go/app/config"
@@ -35,9 +36,14 @@ type Command interface {
 }
 
 type Handler struct {
-	cfg            *config.Config
-	rdb            *persistence.RDB
-	server         ServerInfo
+	cfg              *config.Config
+	rdb              *persistence.RDB
+	server           ServerInfo
+	transactions     map[net.Conn]*Transaction
+	transactionMutex sync.Mutex
+}
+
+type Transaction struct {
 	inTransaction  bool
 	queuedCommands []QueuedCommand
 }
@@ -49,15 +55,17 @@ type QueuedCommand struct {
 
 func NewHandler(cfg *config.Config, rdb *persistence.RDB, server ServerInfo) *Handler {
 	return &Handler{
-		cfg:    cfg,
-		rdb:    rdb,
-		server: server,
+		cfg:          cfg,
+		rdb:          rdb,
+		server:       server,
+		transactions: make(map[net.Conn]*Transaction),
 	}
 }
 
-func (h *Handler) resetTransaction() {
-	h.inTransaction = false
-	h.queuedCommands = nil
+func (h *Handler) resetTransaction(conn net.Conn) {
+	h.transactionMutex.Lock()
+	defer h.transactionMutex.Unlock()
+	delete(h.transactions, conn)
 }
 
 func (h *Handler) Handle(conn net.Conn, args []string) error {
@@ -73,34 +81,27 @@ func (h *Handler) Handle(conn net.Conn, args []string) error {
 
 	fmt.Printf("Master executing: %s %v\n", cmdName, args[1:])
 
+	h.transactionMutex.Lock()
+	transaction, exists := h.transactions[conn]
+	if !exists {
+		transaction = &Transaction{}
+		h.transactions[conn] = transaction
+	}
+	h.transactionMutex.Unlock()
+
 	// Handle transaction commands
 	switch cmdName {
-	case "MULTI":
-		h.inTransaction = true
-		h.queuedCommands = []QueuedCommand{}
-		return communicate.SendResponse(conn, "+OK\r\n")
-	case "EXEC":
-		if !h.inTransaction {
-			return communicate.SendResponse(conn, "-ERR EXEC without MULTI\r\n")
-		}
-		defer h.resetTransaction()
-		return h.executeTransaction(conn)
 	case "DISCARD":
-		if !h.inTransaction {
+		if !transaction.inTransaction {
 			return communicate.SendResponse(conn, "-ERR DISCARD without MULTI\r\n")
 		}
-		h.resetTransaction()
+		h.resetTransaction(conn)
 		return communicate.SendResponse(conn, "+OK\r\n")
 	}
 
-	// Execute read commands immediately, even in a transaction
-	if h.isReadCommand(cmdName) {
-		return cmd.Execute(conn, args[1:])
-	}
-
-	// Queue write commands if in a transaction
-	if h.inTransaction {
-		h.queuedCommands = append(h.queuedCommands, QueuedCommand{Name: cmdName, Args: args[1:]})
+	// Queue commands if in a transaction
+	if transaction.inTransaction && cmdName != "EXEC" {
+		transaction.queuedCommands = append(transaction.queuedCommands, QueuedCommand{Name: cmdName, Args: args[1:]})
 		return communicate.SendResponse(conn, "+QUEUED\r\n")
 	}
 
@@ -113,28 +114,19 @@ func (h *Handler) Handle(conn net.Conn, args []string) error {
 	return err
 }
 
-func (h *Handler) isReadCommand(command string) bool {
-	readCommands := map[string]bool{
-		"GET":   true,
-		"KEYS":  true,
-		"TYPE":  true,
-		"INFO":  true,
-		"PING":  true,
-		"ECHO":  true,
-		"XREAD": true,
-	}
-	return readCommands[strings.ToUpper(command)]
-}
-
 func (h *Handler) executeTransaction(conn net.Conn) error {
-	responses := make([]string, len(h.queuedCommands))
-	for i, queuedCommand := range h.queuedCommands {
-		cmd := h.getCommand(queuedCommand.Name)
-		if cmd == nil {
+	h.transactionMutex.Lock()
+	transaction := h.transactions[conn]
+	h.transactionMutex.Unlock()
+
+	responses := make([]string, len(transaction.queuedCommands))
+	for i, queuedCommand := range transaction.queuedCommands {
+		command := h.getCommand(queuedCommand.Name)
+		if command == nil {
 			responses[i] = fmt.Sprintf("-ERR unknown command '%s'\r\n", queuedCommand.Name)
 		} else {
 			responseWriter := &ResponseWriter{}
-			err := cmd.Execute(responseWriter, queuedCommand.Args)
+			err := command.Execute(responseWriter, queuedCommand.Args)
 			if err != nil {
 				responses[i] = fmt.Sprintf("-ERR %s\r\n", err.Error())
 			} else {
