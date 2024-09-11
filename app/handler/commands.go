@@ -531,6 +531,7 @@ func (c *IncrCommand) Execute(conn net.Conn, args []string) error {
 }
 
 type MultiCommand struct {
+	handler *Handler
 }
 
 func (c *MultiCommand) Execute(conn net.Conn, args []string) error {
@@ -538,5 +539,24 @@ func (c *MultiCommand) Execute(conn net.Conn, args []string) error {
 		return communicate.SendResponse(conn, "-ERR wrong number of arguments for 'multi' command\r\n")
 	}
 
+	c.handler.inTransaction = true
 	return communicate.SendResponse(conn, "+OK\r\n")
+}
+
+type ExecCommand struct {
+	handler *Handler
+}
+
+func (c *ExecCommand) Execute(conn net.Conn, args []string) error {
+	if len(args) != 0 {
+		return communicate.SendResponse(conn, "-ERR wrong number of arguments for 'exec' command\r\n")
+	}
+
+	if !c.handler.inTransaction {
+		return communicate.SendResponse(conn, "-ERR EXEC without MULTI\r\n")
+	}
+
+	c.handler.inTransaction = false
+
+	return communicate.SendResponse(conn, "*0\r\n")
 }

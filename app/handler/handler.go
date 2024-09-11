@@ -34,9 +34,10 @@ type Command interface {
 }
 
 type Handler struct {
-	cfg    *config.Config
-	rdb    *persistence.RDB
-	server ServerInfo
+	cfg           *config.Config
+	rdb           *persistence.RDB
+	server        ServerInfo
+	inTransaction bool
 }
 
 func NewHandler(cfg *config.Config, rdb *persistence.RDB, server ServerInfo) *Handler {
@@ -137,7 +138,9 @@ func (h *Handler) getCommand(name string) Command {
 	case "INCR":
 		return &IncrCommand{rdb: h.rdb}
 	case "MULTI":
-		return &MultiCommand{}
+		return &MultiCommand{handler: h}
+	case "EXEC":
+		return &ExecCommand{handler: h}
 	default:
 		return nil
 	}
