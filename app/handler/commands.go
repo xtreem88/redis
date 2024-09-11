@@ -508,3 +508,21 @@ func encodeXReadResponse(results []persistence.StreamResult) string {
 
 	return builder.String()
 }
+
+type IncrCommand struct {
+	rdb *persistence.RDB
+}
+
+func (c *IncrCommand) Execute(conn net.Conn, args []string) error {
+	if len(args) != 1 {
+		return communicate.SendResponse(conn, "-ERR wrong number of arguments for 'incr' command\r\n")
+	}
+
+	key := args[0]
+	value, err := c.rdb.Incr(key)
+	if err != nil {
+		return communicate.SendResponse(conn, fmt.Sprintf("-ERR %s\r\n", err.Error()))
+	}
+
+	return communicate.SendResponse(conn, fmt.Sprintf(":%d\r\n", value))
+}

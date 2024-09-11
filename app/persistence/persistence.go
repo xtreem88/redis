@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -57,6 +58,31 @@ func (rdb *RDB) GetType(key string) string {
 	default:
 		return "none"
 	}
+}
+
+func (rdb *RDB) Incr(key string) (int64, error) {
+	rdb.mu.Lock()
+	defer rdb.mu.Unlock()
+
+	value, exists := rdb.data[key]
+	if !exists {
+		return 0, fmt.Errorf("key does not exist")
+	}
+
+	strValue, ok := value.(string)
+	if !ok {
+		return 0, fmt.Errorf("value is not a string")
+	}
+
+	intValue, err := strconv.ParseInt(strValue, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("value is not a valid integer")
+	}
+
+	intValue++
+	rdb.data[key] = strconv.FormatInt(intValue, 10)
+
+	return intValue, nil
 }
 
 func (rdb *RDB) parse(f *os.File) error {
