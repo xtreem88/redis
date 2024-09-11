@@ -521,6 +521,9 @@ func (c *IncrCommand) Execute(conn net.Conn, args []string) error {
 	key := args[0]
 	value, err := c.rdb.Incr(key)
 	if err != nil {
+		if err == persistence.ErrNotInteger {
+			return communicate.SendResponse(conn, "-ERR value is not an integer or out of range\r\n")
+		}
 		return communicate.SendResponse(conn, fmt.Sprintf("-ERR %s\r\n", err.Error()))
 	}
 

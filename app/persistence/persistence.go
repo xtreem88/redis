@@ -3,6 +3,7 @@ package persistence
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,8 @@ type RDB struct {
 	expires map[string]time.Time
 	mu      sync.RWMutex
 }
+
+var ErrNotInteger = errors.New("value is not an integer")
 
 func LoadRDB(dir, filename string) (*RDB, error) {
 	path := filepath.Join(dir, filename)
@@ -66,17 +69,19 @@ func (rdb *RDB) Incr(key string) (int64, error) {
 
 	value, exists := rdb.data[key]
 	if !exists {
-		return 0, fmt.Errorf("key does not exist")
+		// Key doesn't exist, set it to 1
+		rdb.data[key] = "1"
+		return 1, nil
 	}
 
 	strValue, ok := value.(string)
 	if !ok {
-		return 0, fmt.Errorf("value is not a string")
+		return 0, ErrNotInteger
 	}
 
 	intValue, err := strconv.ParseInt(strValue, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("value is not a valid integer")
+		return 0, ErrNotInteger
 	}
 
 	intValue++
