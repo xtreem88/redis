@@ -89,18 +89,8 @@ func (h *Handler) Handle(conn net.Conn, args []string) error {
 	}
 	h.transactionMutex.Unlock()
 
-	// Handle transaction commands
-	switch cmdName {
-	case "DISCARD":
-		if !transaction.inTransaction {
-			return communicate.SendResponse(conn, "-ERR DISCARD without MULTI\r\n")
-		}
-		h.resetTransaction(conn)
-		return communicate.SendResponse(conn, "+OK\r\n")
-	}
-
 	// Queue commands if in a transaction
-	if transaction.inTransaction && cmdName != "EXEC" {
+	if transaction.inTransaction && cmdName != "EXEC" && cmdName != "DISCARD" {
 		transaction.queuedCommands = append(transaction.queuedCommands, QueuedCommand{Name: cmdName, Args: args[1:]})
 		return communicate.SendResponse(conn, "+QUEUED\r\n")
 	}
@@ -215,6 +205,8 @@ func (h *Handler) getCommand(name string) Command {
 		return &MultiCommand{handler: h}
 	case "EXEC":
 		return &ExecCommand{handler: h}
+	case "DISCARD":
+		return &DiscardCommand{handler: h}
 	default:
 		return nil
 	}

@@ -579,3 +579,26 @@ func (c *ExecCommand) Execute(conn net.Conn, args []string) error {
 	defer c.handler.resetTransaction(conn)
 	return c.handler.executeTransaction(conn)
 }
+
+type DiscardCommand struct {
+	handler *Handler
+}
+
+func (c *DiscardCommand) Execute(conn net.Conn, args []string) error {
+	if len(args) != 0 {
+		return communicate.SendResponse(conn, "-ERR wrong number of arguments for 'discard' command\r\n")
+	}
+
+	c.handler.transactionMutex.Lock()
+	defer c.handler.transactionMutex.Unlock()
+
+	transaction, exists := c.handler.transactions[conn]
+	if !exists || !transaction.inTransaction {
+		return communicate.SendResponse(conn, "-ERR DISCARD without MULTI\r\n")
+	}
+
+	// Reset the transaction
+	delete(c.handler.transactions, conn)
+
+	return communicate.SendResponse(conn, "+OK\r\n")
+}
